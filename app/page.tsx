@@ -7,6 +7,7 @@ import {
   rankOf,
   GAME_STATE_COLS,
   PHOTO_COLS,
+  PLAYER_COLS,
   ROUND_COLS,
   type GameState,
   type Photo,
@@ -21,6 +22,23 @@ import { Heart, Logo } from "@/app/_components/Heart";
 
 const PLAYER_KEY = "picme-player";
 const VOTES_KEY = "picme-votes"; // photo id -> guessed player id, only on this phone
+const DEVICE_KEY = "picme-device"; // lets the host's "decline" stick to this phone
+
+function deviceId() {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+}
 
 const noSubscribe = () => () => {};
 
@@ -40,6 +58,12 @@ function parsePlayer(raw: string | null): Player | null {
   }
 }
 
+// Unique storage path for an upload (a new name each time, so "Change photo"
+// never shows a cached old one)
+function photoPath(roundId: string, playerId: string, ext: string) {
+  return `${roundId}/${playerId}-${Date.now()}.${ext}`;
+}
+
 function readVotes(): Record<string, string> {
   try {
     return JSON.parse(localStorage.getItem(VOTES_KEY) ?? "{}");
@@ -57,7 +81,8 @@ export default function PlayPage() {
   const [gs, setGs] = useState<GameState | null>(null);
   const [round, setRound] = useState<Round | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
-  const [players, setPlayers] = useState<Player[] | null>(null);
+  // Everyone who asked to join, including those still waiting or declined
+  const [everyone, setEveryone] = useState<Player[] | null>(null);
   const [scores, setScores] = useState<Score[]>([]);
   const [usedPrompts, setUsedPrompts] = useState<string[]>([]);
   const [myVotes, setMyVotes] = useState<Record<string, string>>(readVotes);
@@ -69,10 +94,10 @@ export default function PlayPage() {
   const load = useCallback(async () => {
     const [{ data: g }, { data: p }] = await Promise.all([
       supabase.from("game_state").select(GAME_STATE_COLS).eq("id", 1).single(),
-      supabase.from("players").select("id,name").order("created_at"),
+      supabase.from("players").select(PLAYER_COLS).order("created_at"),
     ]);
     setGs(g ?? null);
-    setPlayers(p ?? []);
+    setEveryone(p ?? []);
     if (g?.phase === "lobby") {
       // Prompts already played this game, so the picker doesn't draw them again
       const { data: rs } = await supabase.from("rounds").select("prompt");
@@ -111,11 +136,13 @@ export default function PlayPage() {
     };
   }, [load]);
 
-  // Only counts while still in the game: if the host removed them or started a
-  // new game, they're back on the join screen
+  // This phone's player, as the host sees them. Gone (removed, or a new game)
+  // means back to the join screen; only approved players take part.
   const saved = joined ?? stored;
-  const checked = players !== null;
-  const player = saved && players?.some((p) => p.id === saved.id) ? saved : null;
+  const checked = everyone !== null;
+  const me = saved ? everyone?.find((p) => p.id === saved.id) ?? null : null;
+  const player = me?.status === "approved" ? me : null;
+  const players = useMemo(() => everyone?.filter((p) => p.status === "approved") ?? null, [everyone]);
 
   const phase = gs?.phase ?? "lobby";
   const now = useNow(phase === "uploading");
@@ -136,12 +163,16 @@ export default function PlayPage() {
     setError(null);
     const { data, error } = await supabase
       .from("players")
-      .insert({ name: trimmed })
-      .select("id,name")
+      .insert({ name: trimmed, device_id: deviceId() })
+      .select(PLAYER_COLS)
       .single();
     setBusy(false);
     if (error?.code === "23505") {
       setError("That name is taken. Add an initial.");
+      return;
+    }
+    if (error?.message.includes("declined")) {
+      setError("The host didn't let you in.");
       return;
     }
     if (error || !data) {
@@ -168,7 +199,7 @@ export default function PlayPage() {
         return;
       }
       const ext = blob.type === "image/jpeg" ? "jpg" : file.name.split(".").pop() || "jpg";
-      const path = `${round.id}/${player.id}-${Date.now()}.${ext}`;
+      const path = photoPath(round.id, player.id, ext);
 
       const { error: upErr } = await supabase.storage
         .from("photos")
@@ -279,6 +310,20 @@ export default function PlayPage() {
 
   if (!checked) {
     content = null;
+  } else if (me?.status === "pending") {
+    content = (
+      <div>
+        <h1 className="text-4xl font-bold">Waiting for the host to let you in…</h1>
+        <p className={muted}>Hi {me.name}! This screen changes as soon as you&apos;re in.</p>
+      </div>
+    );
+  } else if (me?.status === "declined") {
+    content = (
+      <div>
+        <h1 className="text-4xl font-bold">The host didn&apos;t let you in.</h1>
+        <p className={muted}>If that&apos;s a mistake, ask the host. They can still let you in.</p>
+      </div>
+    );
   } else if (!player) {
     content = (
       <form

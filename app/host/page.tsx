@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   supabase,
@@ -8,6 +16,7 @@ import {
   rankOf,
   GAME_STATE_COLS,
   PHOTO_COLS,
+  PLAYER_COLS,
   ROUND_COLS,
   type GameState,
   type Photo,
@@ -18,6 +27,7 @@ import {
 import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, unplayed } from "@/lib/prompts";
 import { secondsLeft, useNow } from "@/lib/useNow";
 import { Heart, Logo } from "@/app/_components/Heart";
+import { askNotifyPermission, chime, notifyJoin, notifyPermission, unlockAudio } from "@/lib/joinAlerts";
 
 // Upload time in seconds; null = no timer (open until everyone has uploaded)
 const TIMER_OPTIONS: (number | null)[] = [20, 40, 60, null];
@@ -31,7 +41,13 @@ export default function HostPage() {
   const [gs, setGs] = useState<GameState | null>(null);
   const [round, setRound] = useState<Round | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
+  // Only approved players take part; the others wait for the host
   const [players, setPlayers] = useState<Player[]>([]);
+  const [waiting, setWaiting] = useState<Player[]>([]);
+  const [declined, setDeclined] = useState<Player[]>([]);
+  const seenWaiting = useRef<Set<string> | null>(null);
+  const [, setPermAsked] = useState(0);
+  const permission = useSyncExternalStore(noSubscribe, notifyPermission, () => "unsupported" as const);
   const [usedPrompts, setUsedPrompts] = useState<string[]>([]);
   const [scores, setScores] = useState<Score[]>([]);
   const [busy, setBusy] = useState(false);
@@ -50,11 +66,25 @@ export default function HostPage() {
   const load = useCallback(async () => {
     const [{ data: g }, { data: p }, { data: rs }] = await Promise.all([
       supabase.from("game_state").select(GAME_STATE_COLS).eq("id", 1).single(),
-      supabase.from("players").select("id,name").order("created_at"),
+      supabase.from("players").select(PLAYER_COLS).order("created_at"),
       supabase.from("rounds").select("prompt"),
     ]);
     setGs(g ?? null);
-    setPlayers(p ?? []);
+    const all = p ?? [];
+    const pending = all.filter((x) => x.status === "pending");
+    setPlayers(all.filter((x) => x.status === "approved"));
+    setWaiting(pending);
+    setDeclined(all.filter((x) => x.status === "declined"));
+
+    // Chime + notification for anyone new asking to join (not for people
+    // already waiting when the page opened)
+    if (seenWaiting.current) {
+      const fresh = pending.filter((x) => !seenWaiting.current!.has(x.id));
+      if (fresh.length) chime();
+      fresh.forEach((x) => notifyJoin(x.name, x.id));
+    }
+    seenWaiting.current = new Set(pending.map((x) => x.id));
+
     setUsedPrompts((rs ?? []).map((r) => r.prompt));
 
     if (g?.current_round_id) {
@@ -92,6 +122,22 @@ export default function HostPage() {
       supabase.removeChannel(ch);
     };
   }, [load]);
+
+  // Sound can only play after the page has been clicked once
+  useEffect(() => {
+    window.addEventListener("pointerdown", unlockAudio);
+    window.addEventListener("keydown", unlockAudio);
+    return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
+    };
+  }, []);
+
+  async function turnOnAlerts() {
+    unlockAudio();
+    await askNotifyPermission();
+    setPermAsked((n) => n + 1);
+  }
 
   async function run(fn: () => PromiseLike<unknown>) {
     if (busy) return;
@@ -165,6 +211,10 @@ export default function HostPage() {
     run(() => supabase.rpc("set_pick_mode", { p_mode: mode }));
   const skipPicker = () => run(() => supabase.rpc("skip_picker"));
   const startRound = () => run(() => supabase.rpc("start_previewed_round", { p_player: null }));
+
+  const letIn = (id: string) => run(() => supabase.rpc("approve_player", { p_id: id }));
+  const decline = (id: string) => run(() => supabase.rpc("decline_player", { p_id: id }));
+  const setAutoApprove = (on: boolean) => run(() => supabase.rpc("set_auto_approve", { p_on: on }));
 
   const removePlayer = (id: string) =>
     run(() => supabase.from("players").delete().eq("id", id));
@@ -432,6 +482,27 @@ export default function HostPage() {
                   Players take turns
                 </button>
               </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="mr-2 w-48 text-xl font-semibold" id="auto-approve-label">
+                  Let everyone in automatically
+                </span>
+                <button
+                  role="switch"
+                  aria-checked={!!gs?.auto_approve}
+                  aria-labelledby="auto-approve-label"
+                  onClick={() => setAutoApprove(!gs?.auto_approve)}
+                  disabled={busy}
+                  className={`relative h-9 w-16 rounded-full transition disabled:opacity-40 ${focus} ${
+                    gs?.auto_approve ? "border border-rose bg-rose" : "glass"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1/2 h-7 w-7 -translate-y-1/2 rounded-full bg-white shadow transition-all ${
+                      gs?.auto_approve ? "left-8" : "left-1"
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -460,6 +531,25 @@ export default function HostPage() {
                 </li>
               ))}
             </ul>
+            {declined.length > 0 && (
+              <div className="mt-5">
+                <p className="text-lg font-semibold text-ink/60">Not let in</p>
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {declined.map((p) => (
+                    <li key={p.id} className="flex items-center gap-2 text-lg text-ink/60">
+                      {p.name}
+                      <button
+                        onClick={() => letIn(p.id)}
+                        disabled={busy}
+                        className={`glass rounded-full px-3 py-0.5 text-base font-semibold text-ink ${focus}`}
+                      >
+                        Let in
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </aside>
       </section>
@@ -632,6 +722,12 @@ export default function HostPage() {
       <header className="flex items-baseline justify-between">
         <Logo className="text-4xl" />
         <div className="flex items-baseline gap-6 text-lg font-medium text-ink/70">
+          {permission === "default" && (
+            <button onClick={turnOnAlerts} className="glass rounded-full px-4 py-1.5 font-semibold text-ink">
+              Turn on join alerts
+            </button>
+          )}
+          {permission === "denied" && <span>Join alerts blocked in browser settings</span>}
           {phase !== "lobby" && phase !== "scoreboard" && (
             <span>
               {players.length} {players.length === 1 ? "player" : "players"}
@@ -650,6 +746,36 @@ export default function HostPage() {
         </div>
       </header>
       {body}
+
+      {waiting.length > 0 && (
+        <aside
+          aria-label="Wants to join"
+          className="glass fixed bottom-6 right-6 z-20 w-[min(92vw,380px)] rounded-3xl p-5"
+        >
+          <h2 className="text-2xl font-bold">Wants to join</h2>
+          <ul className="mt-3 flex max-h-[50vh] flex-col gap-2 overflow-y-auto">
+            {waiting.map((p) => (
+              <li key={p.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-xl font-semibold">{p.name}</span>
+                <button
+                  onClick={() => letIn(p.id)}
+                  disabled={busy}
+                  className={`rounded-full bg-rose px-4 py-2 text-lg font-semibold text-white disabled:opacity-40 ${focus}`}
+                >
+                  Let in
+                </button>
+                <button
+                  onClick={() => decline(p.id)}
+                  disabled={busy}
+                  className={`glass rounded-full px-4 py-2 text-lg font-semibold disabled:opacity-40 ${focus}`}
+                >
+                  Decline
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
+      )}
     </main>
   );
 }
