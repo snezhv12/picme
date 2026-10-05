@@ -14,7 +14,7 @@ import {
   type Round,
   type Score,
 } from "@/lib/supabase";
-import { categoryName, hintFor } from "@/lib/prompts";
+import { CATEGORIES, SHUFFLE, categoryName, hintFor, pickPrompt, unplayed } from "@/lib/prompts";
 import { compressImage } from "@/lib/compress";
 import { secondsLeft, useNow } from "@/lib/useNow";
 import { Heart, Logo } from "@/app/_components/Heart";
@@ -59,6 +59,7 @@ export default function PlayPage() {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [players, setPlayers] = useState<Player[] | null>(null);
   const [scores, setScores] = useState<Score[]>([]);
+  const [usedPrompts, setUsedPrompts] = useState<string[]>([]);
   const [myVotes, setMyVotes] = useState<Record<string, string>>(readVotes);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,6 +73,11 @@ export default function PlayPage() {
     ]);
     setGs(g ?? null);
     setPlayers(p ?? []);
+    if (g?.phase === "lobby") {
+      // Prompts already played this game, so the picker doesn't draw them again
+      const { data: rs } = await supabase.from("rounds").select("prompt");
+      setUsedPrompts((rs ?? []).map((r) => r.prompt));
+    }
     if (g?.phase === "scoreboard") {
       const { data: s } = await supabase.rpc("scoreboard");
       setScores(s ?? []);
@@ -185,6 +191,42 @@ export default function PlayPage() {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
     }
+  }
+
+  // --- Picking the category on your turn ---------------------------------
+
+  const preview = gs?.preview_prompt ?? null;
+  const drawnFrom = gs?.preview_from ?? null;
+
+  function turnError(message: string) {
+    setError(message.includes("turn") ? "It's not your turn anymore." : "That didn't work. Try again.");
+  }
+
+  async function pick(from: string) {
+    if (!player || busy) return;
+    const p = pickPrompt(from, usedPrompts, from === drawnFrom ? preview ?? undefined : undefined);
+    if (!p) return;
+    setBusy(true);
+    setError(null);
+    const { error } = await supabase.rpc("set_preview", {
+      p_player: player.id,
+      p_prompt: p.prompt,
+      p_category: p.category,
+      p_from: from,
+    });
+    if (error) turnError(error.message);
+    await load();
+    setBusy(false);
+  }
+
+  async function startMyRound() {
+    if (!player || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error } = await supabase.rpc("start_previewed_round", { p_player: player.id });
+    if (error) turnError(error.message);
+    await load();
+    setBusy(false);
   }
 
   async function vote(photoId: string, guessId: string) {
@@ -425,6 +467,71 @@ export default function PlayPage() {
     content = (
       <div>
         <h1 className="text-4xl font-bold">Eyes on the big screen.</h1>
+      </div>
+    );
+  } else if (phase === "lobby" && gs?.pick_mode === "players" && gs.picker_id === player.id) {
+    const chip = (on: boolean) =>
+      `rounded-full px-4 py-2.5 text-base font-semibold active:scale-[0.98] disabled:opacity-40 ${focus} ${
+        on ? "border border-rose bg-rose text-white" : "glass"
+      }`;
+    const allPlayed = (from: string) => unplayed(from, usedPrompts).length === 0;
+    const noneLeft = !!drawnFrom && !!preview && unplayed(drawnFrom, usedPrompts, preview).length === 0;
+    const cat = categoryName(gs.preview_category);
+    content = (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-4xl font-bold">Your turn to pick!</h1>
+          <p className={muted}>Choose a category. Everyone gets the same prompt.</p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => pick(SHUFFLE)}
+            disabled={busy || allPlayed(SHUFFLE)}
+            aria-pressed={drawnFrom === SHUFFLE}
+            className={chip(drawnFrom === SHUFFLE)}
+          >
+            Shuffle
+          </button>
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => pick(c.id)}
+              disabled={busy || allPlayed(c.id)}
+              aria-pressed={drawnFrom === c.id}
+              className={`${chip(drawnFrom === c.id)} ${allPlayed(c.id) ? "line-through" : ""}`}
+            >
+              {c.name}
+            </button>
+          ))}
+        </div>
+
+        {preview && (
+          <div className="glass rounded-3xl p-5" aria-live="polite">
+            <p className={label}>{cat ?? "From the host"}</p>
+            <p className="mt-1 text-2xl font-bold leading-tight">{preview}</p>
+            {drawnFrom && (
+              <button
+                onClick={() => pick(drawnFrom)}
+                disabled={busy || noneLeft}
+                className={`${btnSecondary} mt-4`}
+              >
+                {noneLeft ? "No other prompts left here" : "Another prompt"}
+              </button>
+            )}
+          </div>
+        )}
+
+        <button onClick={startMyRound} disabled={busy || !preview} className={btnPrimary}>
+          Start round
+        </button>
+      </div>
+    );
+  } else if (phase === "lobby" && gs?.pick_mode === "players" && gs.picker_id && names[gs.picker_id]) {
+    content = (
+      <div>
+        <h1 className="text-4xl font-bold">{names[gs.picker_id]} is picking the category…</h1>
+        <p className={muted}>The prompt shows up here when the round starts.</p>
       </div>
     );
   } else {

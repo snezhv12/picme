@@ -15,7 +15,7 @@ import {
   type Round,
   type Score,
 } from "@/lib/supabase";
-import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, unplayed, type Pick } from "@/lib/prompts";
+import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, unplayed } from "@/lib/prompts";
 import { secondsLeft, useNow } from "@/lib/useNow";
 import { Heart, Logo } from "@/app/_components/Heart";
 
@@ -37,10 +37,7 @@ export default function HostPage() {
   const [busy, setBusy] = useState(false);
 
   // Lobby setup, only on this screen until the round starts
-  const [preview, setPreview] = useState<Pick | null>(null);
-  const [drawnFrom, setDrawnFrom] = useState<string | null>(null);
   const [custom, setCustom] = useState("");
-  const [seconds, setSeconds] = useState<number | null>(TIMER_OPTIONS[0]);
 
   const [gallery, setGallery] = useState<GalleryItem[] | null>(null);
 
@@ -126,37 +123,48 @@ export default function HostPage() {
 
   // --- Lobby ---------------------------------------------------------------
 
+  // The lobby preview is shared, so the picking player's phone and this
+  // screen always show the same prompt
+  const preview = gs?.preview_prompt ?? null;
+  const drawnFrom = gs?.preview_from ?? null;
+  const seconds = gs ? gs.timer_seconds : TIMER_OPTIONS[0];
+  const turns = gs?.pick_mode !== "host";
+  const pickerName = gs?.picker_id ? names[gs.picker_id] : undefined;
+
   // Draw a prompt not played yet this game. Drawing again from the same
-  // category (Another prompt) also skips the one on screen.
-  function draw(from: string) {
-    const pick = pickPrompt(from, usedPrompts, from === drawnFrom ? preview?.prompt : undefined);
-    if (!pick) return;
-    setDrawnFrom(from);
-    setPreview(pick);
-  }
+  // category (Another prompt) also skips the one on screen. The host can do
+  // this at any time, even on a player's turn.
+  const draw = (from: string) =>
+    run(async () => {
+      const pick = pickPrompt(from, usedPrompts, from === drawnFrom ? preview ?? undefined : undefined);
+      if (!pick) return;
+      await supabase.rpc("set_preview", {
+        p_player: null,
+        p_prompt: pick.prompt,
+        p_category: pick.category,
+        p_from: from,
+      });
+    });
   const allPlayed = (from: string) => unplayed(from, usedPrompts).length === 0;
 
-  function applyCustom() {
-    const t = custom.trim();
-    if (!t) return;
-    setDrawnFrom(null);
-    setPreview({ prompt: t, category: "" });
-    setCustom("");
-  }
-
-  const startRound = () =>
+  const applyCustom = () =>
     run(async () => {
-      if (!preview) return;
-      const { error } = await supabase.rpc("start_round", {
-        p_prompt: preview.prompt,
-        p_category: preview.category || null,
-        p_seconds: seconds,
+      const t = custom.trim();
+      if (!t) return;
+      const { error } = await supabase.rpc("set_preview", {
+        p_player: null,
+        p_prompt: t,
+        p_category: null,
+        p_from: null,
       });
-      if (!error) {
-        setPreview(null);
-        setDrawnFrom(null);
-      }
+      if (!error) setCustom("");
     });
+
+  const setTimer = (s: number | null) => run(() => supabase.rpc("set_timer", { p_seconds: s }));
+  const setPickMode = (mode: "host" | "players") =>
+    run(() => supabase.rpc("set_pick_mode", { p_mode: mode }));
+  const skipPicker = () => run(() => supabase.rpc("skip_picker"));
+  const startRound = () => run(() => supabase.rpc("start_previewed_round", { p_player: null }));
 
   const removePlayer = (id: string) =>
     run(() => supabase.from("players").delete().eq("id", id));
@@ -284,18 +292,36 @@ export default function HostPage() {
   let body: ReactNode = null;
 
   if (phase === "lobby") {
-    const previewCategory = categoryName(preview?.category);
+    const previewCategory = categoryName(gs?.preview_category);
     body = (
       <section className="flex flex-1 items-start justify-between gap-[4vw] pt-6">
         <div className="flex max-w-5xl flex-1 flex-col gap-7">
-          <h1 className="text-[clamp(2.5rem,4.5vw,4.5rem)] font-bold leading-[1.05]">
-            {usedPrompts.length > 0 ? "Next round. Pick a category." : "Pick a category."}
-          </h1>
+          {turns ? (
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <h1 className="text-[clamp(2.5rem,4.5vw,4.5rem)] font-bold leading-[1.05]">
+                  {pickerName ? `${pickerName} is picking…` : "Waiting for players."}
+                </h1>
+                <p className="mt-2 text-2xl text-ink/65">
+                  {pickerName ? "You can still pick for them below." : "The first to join picks first."}
+                </p>
+              </div>
+              {pickerName && players.length > 1 && (
+                <button onClick={skipPicker} disabled={busy} className={btnSecondary}>
+                  Skip to next player
+                </button>
+              )}
+            </div>
+          ) : (
+            <h1 className="text-[clamp(2.5rem,4.5vw,4.5rem)] font-bold leading-[1.05]">
+              {usedPrompts.length > 0 ? "Next round. Pick a category." : "Pick a category."}
+            </h1>
+          )}
 
           <div className="flex flex-wrap gap-3">
             <button
               onClick={() => draw(SHUFFLE)}
-              disabled={allPlayed(SHUFFLE)}
+              disabled={busy || allPlayed(SHUFFLE)}
               aria-pressed={drawnFrom === SHUFFLE}
               className={chip(drawnFrom === SHUFFLE)}
             >
@@ -305,7 +331,7 @@ export default function HostPage() {
               <button
                 key={c.id}
                 onClick={() => draw(c.id)}
-                disabled={allPlayed(c.id)}
+                disabled={busy || allPlayed(c.id)}
                 aria-pressed={drawnFrom === c.id}
                 title={allPlayed(c.id) ? "All prompts in this category have been played" : undefined}
                 className={`${chip(drawnFrom === c.id)} ${allPlayed(c.id) ? "line-through" : ""}`}
@@ -330,7 +356,7 @@ export default function HostPage() {
               aria-label="Write my own prompt"
               className="glass min-w-0 flex-1 rounded-full px-6 py-3 text-xl outline-none placeholder:text-ink/50 focus:ring-2 focus:ring-rose"
             />
-            <button type="submit" disabled={!custom.trim()} className={btnSecondary}>
+            <button type="submit" disabled={busy || !custom.trim()} className={btnSecondary}>
               Use
             </button>
           </form>
@@ -340,15 +366,15 @@ export default function HostPage() {
               <>
                 <p className={label}>{previewCategory ?? "Your own prompt"}</p>
                 <p className="mt-2 text-[clamp(2rem,3.6vw,3.5rem)] font-bold leading-tight">
-                  {preview.prompt}
+                  {preview}
                 </p>
                 {drawnFrom && (
                   <button
                     onClick={() => draw(drawnFrom)}
-                    disabled={unplayed(drawnFrom, usedPrompts, preview.prompt).length === 0}
+                    disabled={busy || unplayed(drawnFrom, usedPrompts, preview).length === 0}
                     className={`${btnSecondary} mt-5`}
                   >
-                    {unplayed(drawnFrom, usedPrompts, preview.prompt).length === 0
+                    {unplayed(drawnFrom, usedPrompts, preview).length === 0
                       ? "No other prompts left here"
                       : "Another prompt"}
                   </button>
@@ -356,26 +382,56 @@ export default function HostPage() {
               </>
             ) : (
               <p className="text-2xl font-semibold text-ink/60">
-                The prompt shows up here before the round starts.
+                {turns && pickerName
+                  ? `${pickerName}'s prompt shows up here as soon as they pick.`
+                  : "The prompt shows up here before the round starts."}
               </p>
             )}
           </div>
 
-          <div className="flex flex-wrap items-center gap-6">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
             {primaryButton}
-            <div role="radiogroup" aria-label="Upload time" className="flex items-center gap-2">
-              <span className="mr-2 text-xl font-semibold">Timer</span>
-              {TIMER_OPTIONS.map((s) => (
+            <div className="flex flex-col gap-3">
+              <div role="radiogroup" aria-label="Upload time" className="flex flex-wrap items-center gap-2">
+                <span className="mr-2 w-48 text-xl font-semibold">Timer</span>
+                {TIMER_OPTIONS.map((s) => (
+                  <button
+                    key={s ?? "none"}
+                    role="radio"
+                    aria-checked={seconds === s}
+                    onClick={() => setTimer(s)}
+                    disabled={busy}
+                    className={chip(seconds === s, "px-5 py-2 text-xl")}
+                  >
+                    {s === null ? "No timer" : `${s}s`}
+                  </button>
+                ))}
+              </div>
+              <div
+                role="radiogroup"
+                aria-label="Who picks the category?"
+                className="flex flex-wrap items-center gap-2"
+              >
+                <span className="mr-2 w-48 text-xl font-semibold">Who picks?</span>
                 <button
-                  key={s ?? "none"}
                   role="radio"
-                  aria-checked={seconds === s}
-                  onClick={() => setSeconds(s)}
-                  className={chip(seconds === s, "px-5 py-2 text-xl")}
+                  aria-checked={!turns}
+                  onClick={() => setPickMode("host")}
+                  disabled={busy}
+                  className={chip(!turns, "px-5 py-2 text-xl")}
                 >
-                  {s === null ? "No timer" : `${s}s`}
+                  Host
                 </button>
-              ))}
+                <button
+                  role="radio"
+                  aria-checked={turns}
+                  onClick={() => setPickMode("players")}
+                  disabled={busy}
+                  className={chip(turns, "px-5 py-2 text-xl")}
+                >
+                  Players take turns
+                </button>
+              </div>
             </div>
           </div>
         </div>

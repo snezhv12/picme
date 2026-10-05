@@ -34,13 +34,23 @@ export type GameState = {
   current_round_id: string | null;
   current_photo_id: string | null;
   vote_count: number;
+  // Lobby: who picks the category, whose turn it is, and the prompt on show
+  pick_mode: "host" | "players";
+  picker_id: string | null;
+  preview_prompt: string | null;
+  preview_category: string | null;
+  // What the preview was drawn from (category id or "shuffle"); null = host's own
+  preview_from: string | null;
+  // Upload time for the next round; null = no timer
+  timer_seconds: number | null;
 };
 
 export type Score = { player_id: string; name: string; points: number };
 
 export const ROUND_COLS = "id,prompt,category,status,ends_at";
 export const PHOTO_COLS = "id,round_id,player_id,path,revealed,position";
-export const GAME_STATE_COLS = "phase,current_round_id,current_photo_id,vote_count";
+export const GAME_STATE_COLS =
+  "phase,current_round_id,current_photo_id,vote_count,pick_mode,picker_id,preview_prompt,preview_category,preview_from,timer_seconds";
 
 export function photoUrl(path: string) {
   return supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;
