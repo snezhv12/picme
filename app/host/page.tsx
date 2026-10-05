@@ -15,7 +15,7 @@ import {
   type Round,
   type Score,
 } from "@/lib/supabase";
-import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, type Pick } from "@/lib/prompts";
+import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, unplayed, type Pick } from "@/lib/prompts";
 import { secondsLeft, useNow } from "@/lib/useNow";
 import { display, hand } from "@/lib/fonts";
 import { Confetti } from "@/app/_components/Confetti";
@@ -125,10 +125,15 @@ export default function HostPage() {
 
   // --- Lobby ---------------------------------------------------------------
 
+  // Draw a prompt not played yet this game. Drawing again from the same
+  // category (Another prompt) also skips the one on screen.
   function draw(from: string) {
+    const pick = pickPrompt(from, usedPrompts, from === drawnFrom ? preview?.prompt : undefined);
+    if (!pick) return;
     setDrawnFrom(from);
-    setPreview(pickPrompt(from, usedPrompts, preview?.prompt));
+    setPreview(pick);
   }
+  const allPlayed = (from: string) => unplayed(from, usedPrompts).length === 0;
 
   function applyCustom() {
     const t = custom.trim();
@@ -277,8 +282,9 @@ export default function HostPage() {
           <div className="flex flex-wrap gap-3">
             <button
               onClick={() => draw(SHUFFLE)}
+              disabled={allPlayed(SHUFFLE)}
               aria-pressed={drawnFrom === SHUFFLE}
-              className={`rounded-full px-7 py-3.5 text-xl font-bold transition active:scale-[0.98] ${focus} ${
+              className={`rounded-full px-7 py-3.5 text-xl font-bold transition active:scale-[0.98] disabled:opacity-30 ${focus} ${
                 drawnFrom === SHUFFLE ? "bg-ink text-petal" : "bg-rose text-petal"
               }`}
             >
@@ -288,8 +294,12 @@ export default function HostPage() {
               <button
                 key={c.id}
                 onClick={() => draw(c.id)}
+                disabled={allPlayed(c.id)}
                 aria-pressed={drawnFrom === c.id}
-                className={`${btnSecondary} ${drawnFrom === c.id ? "bg-ink text-petal" : ""}`}
+                title={allPlayed(c.id) ? "All prompts in this category have been played" : undefined}
+                className={`${btnSecondary} ${drawnFrom === c.id ? "bg-ink text-petal" : ""} ${
+                  allPlayed(c.id) ? "line-through" : ""
+                }`}
               >
                 {c.name}
               </button>
@@ -324,8 +334,14 @@ export default function HostPage() {
                   {preview.prompt}
                 </p>
                 {drawnFrom && (
-                  <button onClick={() => draw(drawnFrom)} className={`${btnSecondary} mt-5`}>
-                    Another prompt
+                  <button
+                    onClick={() => draw(drawnFrom)}
+                    disabled={unplayed(drawnFrom, usedPrompts, preview.prompt).length === 0}
+                    className={`${btnSecondary} mt-5`}
+                  >
+                    {unplayed(drawnFrom, usedPrompts, preview.prompt).length === 0
+                      ? "No other prompts left here"
+                      : "Another prompt"}
                   </button>
                 )}
               </>

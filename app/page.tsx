@@ -14,7 +14,7 @@ import {
   type Round,
   type Score,
 } from "@/lib/supabase";
-import { categoryName } from "@/lib/prompts";
+import { categoryName, hintFor } from "@/lib/prompts";
 import { compressImage } from "@/lib/compress";
 import { secondsLeft, useNow } from "@/lib/useNow";
 import { display, hand } from "@/lib/fonts";
@@ -294,11 +294,13 @@ export default function PlayPage() {
   } else if (phase === "uploading" && round) {
     const open = left !== null && left > 0;
     const cat = categoryName(round.category);
+    const hint = hintFor(round.prompt);
     content = (
       <div className="flex flex-col gap-7">
         <div>
           {cat && <p className={label}>{cat}</p>}
           <h1 className="mt-1 text-4xl font-extrabold leading-tight">{round.prompt}</h1>
+          {hint && <p className="mt-2 text-base font-semibold text-ink/70">{hint}</p>}
         </div>
 
         {open && (
