@@ -17,7 +17,7 @@ import {
 import { categoryName, hintFor } from "@/lib/prompts";
 import { compressImage } from "@/lib/compress";
 import { secondsLeft, useNow } from "@/lib/useNow";
-import { display, hand } from "@/lib/fonts";
+import { Heart, Logo } from "@/app/_components/Heart";
 
 const PLAYER_KEY = "picme-player";
 const VOTES_KEY = "picme-votes"; // photo id -> guessed player id, only on this phone
@@ -209,28 +209,27 @@ export default function PlayPage() {
   }
 
   const focus =
-    "focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-rose";
-  const btnPrimary = `w-full rounded-full bg-ink px-6 py-4 text-lg font-bold text-petal active:scale-[0.98] disabled:opacity-40 ${focus}`;
-  const btnSecondary = `w-full rounded-full border-[3px] border-ink px-6 py-3.5 text-lg font-bold disabled:opacity-40 ${focus}`;
-  const muted = "mt-3 text-lg text-ink/75";
-  const label = "text-sm font-bold uppercase tracking-widest text-rose";
+    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
+  const btnPrimary = `w-full rounded-full bg-rose px-6 py-4 text-lg font-semibold text-white shadow-[0_8px_24px_rgb(232_120_154/0.35)] active:scale-[0.98] disabled:opacity-40 disabled:shadow-none ${focus}`;
+  const btnSecondary = `glass w-full rounded-full px-6 py-3.5 text-lg font-semibold active:scale-[0.98] disabled:opacity-40 ${focus}`;
+  const muted = "mt-3 text-lg text-ink/70";
+  const label = "text-sm font-semibold uppercase tracking-[0.18em] text-ink/60";
 
-  const polaroid = (path: string, caption: string, small = false) => (
-    <figure
-      className={`mx-auto -rotate-2 bg-petal p-3 pb-2 shadow-2xl shadow-ink/20 ${small ? "w-56" : "w-64"}`}
-    >
+  // Small preview of your own upload
+  const thumb = (path: string, caption: string) => (
+    <figure className="frame mx-auto w-60">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={photoUrl(path)} alt="" className="aspect-square w-full object-cover" />
-      <figcaption className={`${hand.className} py-1 text-center text-3xl`}>{caption}</figcaption>
+      <img src={photoUrl(path)} alt="Your photo" className="aspect-square w-full object-cover" />
+      <figcaption className="pb-1 pt-2 text-center text-lg font-semibold">{caption}</figcaption>
     </figure>
   );
 
-  // Whole photo, as large as the screen allows, in an instant-photo frame
-  const bigPhoto = (path: string, caption: string, alt: string) => (
-    <figure className="-rotate-1 bg-petal p-3 pb-2 shadow-2xl shadow-ink/20">
+  // Whole photo, as large as the screen allows, in a glassy frame
+  const bigPhoto = (path: string, caption: ReactNode, alt: string) => (
+    <figure className="frame">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={photoUrl(path)} alt={alt} className="mx-auto max-h-[55dvh] w-full object-contain" />
-      <figcaption className={`${hand.className} pt-1 text-center text-4xl leading-tight`}>{caption}</figcaption>
+      <figcaption className="pb-1 pt-3 text-center text-2xl font-semibold leading-tight">{caption}</figcaption>
     </figure>
   );
 
@@ -248,8 +247,8 @@ export default function PlayPage() {
         }}
       >
         <div>
-          <h1 className="text-6xl font-extrabold tracking-tight">
-            Pic<span className="text-rose">Me</span>
+          <h1>
+            <Logo className="text-6xl" />
           </h1>
           <p className={muted}>Show a photo. Everyone guesses whose it is.</p>
         </div>
@@ -263,7 +262,7 @@ export default function PlayPage() {
             }}
             maxLength={24}
             autoComplete="given-name"
-            className="rounded-2xl border-[3px] border-ink bg-petal px-5 py-4 text-xl outline-none focus:ring-4 focus:ring-rose"
+            className="glass rounded-full px-6 py-4 text-xl outline-none focus:ring-2 focus:ring-rose"
           />
         </label>
         <button type="submit" disabled={busy || !name.trim()} className={btnPrimary}>
@@ -276,7 +275,7 @@ export default function PlayPage() {
     content = (
       <div className="flex flex-col gap-6">
         <div>
-          <h1 className="text-4xl font-extrabold">That&apos;s a wrap!</h1>
+          <h1 className="text-4xl font-bold">That&apos;s a wrap!</h1>
           {mine >= 0 && (
             <p className="mt-3 text-2xl font-bold">
               You came #{rankOf(scores, mine)} with {scores[mine].points}{" "}
@@ -289,12 +288,12 @@ export default function PlayPage() {
             <li
               key={s.player_id}
               className={`flex items-baseline gap-4 rounded-2xl px-5 py-3 ${
-                s.player_id === player.id ? "bg-ink text-petal" : "bg-petal"
+                s.player_id === player.id ? "border border-rose bg-rose text-white" : "glass"
               }`}
             >
               <span className="w-6 font-bold tabular-nums opacity-70">{rankOf(scores, i)}</span>
-              <span className="flex-1 truncate text-lg font-bold">{s.name}</span>
-              <span className="text-lg font-extrabold tabular-nums">{s.points}</span>
+              <span className="flex-1 truncate text-lg font-semibold">{s.name}</span>
+              <span className="text-lg font-bold tabular-nums">{s.points}</span>
             </li>
           ))}
         </ol>
@@ -311,20 +310,20 @@ export default function PlayPage() {
       <div className="flex flex-col gap-7">
         <div>
           {cat && <p className={label}>{cat}</p>}
-          <h1 className="mt-1 text-4xl font-extrabold leading-tight">{round.prompt}</h1>
+          <h1 className="mt-1 text-4xl font-bold leading-tight">{round.prompt}</h1>
           {hint && <p className="mt-2 text-base font-semibold text-ink/70">{hint}</p>}
         </div>
 
         {open && !noTimer && left !== null && (
           <p
-            className={`text-7xl font-extrabold leading-none tabular-nums ${left <= 5 ? "text-rose" : ""}`}
+            className={`text-7xl font-bold leading-none tabular-nums ${left <= 5 ? "text-rose" : ""}`}
           >
             {left}
             <span className="ml-2 text-2xl font-semibold text-ink/70">sec</span>
           </p>
         )}
 
-        {myPhoto && polaroid(myPhoto.path, open ? "Sent" : "In!")}
+        {myPhoto && thumb(myPhoto.path, open ? "Sent" : "In")}
 
         {open && myPhoto && !busy && (
           <p className="text-center text-lg font-bold" aria-live="polite">
@@ -355,7 +354,7 @@ export default function PlayPage() {
         )}
 
         {!open && !busy && (
-          <p className="text-3xl font-extrabold">
+          <p className="text-3xl font-bold">
             {noTimer ? "Uploads are closed." : "Time's up."}{" "}
             {myPhoto ? "Your photo is in." : "You'll be in the next round."}
           </p>
@@ -368,12 +367,19 @@ export default function PlayPage() {
     const guess = myVotes[current.id];
     content = (
       <div className="flex flex-col gap-5">
-        <h1 className="text-2xl font-extrabold leading-tight">{round.prompt}</h1>
+        <h1 className="text-2xl font-bold leading-tight">{round.prompt}</h1>
 
         {phase === "reveal" ? (
           <>
-            {bigPhoto(current.path, owner, `Photo by ${owner}`)}
-            <p className="text-center text-2xl font-extrabold">
+            {bigPhoto(
+              current.path,
+              <span className="flex items-center justify-center gap-2 text-3xl">
+                {owner}
+                <Heart key={current.id} className="heart-pulse h-7 w-7 text-rose" strokeWidth={1.75} />
+              </span>,
+              `Photo by ${owner}`
+            )}
+            <p className="text-center text-xl text-ink/75">
               {mine ? "Your turn! Tell us the story." : "Tell us the story"}
             </p>
           </>
@@ -381,13 +387,13 @@ export default function PlayPage() {
           <>
             {bigPhoto(current.path, "Yours", "Your photo")}
             <div>
-              <p className="text-3xl font-extrabold">This one&apos;s yours.</p>
+              <p className="text-3xl font-bold">This one&apos;s yours.</p>
               <p className={muted}>Keep a straight face.</p>
             </div>
           </>
         ) : (
           <>
-            {bigPhoto(current.path, "Who took this?", "Mystery photo")}
+            {bigPhoto(current.path, <span className="text-ink/45">Who took this?</span>, "Mystery photo")}
             <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Who took this?">
               {others.map((c) => {
                 const picked = guess === c.id;
@@ -397,8 +403,8 @@ export default function PlayPage() {
                     role="radio"
                     aria-checked={picked}
                     onClick={() => vote(current.id, c.id)}
-                    className={`min-h-14 truncate rounded-2xl border-[3px] border-ink px-4 py-3 text-lg font-bold active:scale-[0.98] ${focus} ${
-                      picked ? "bg-ink text-petal" : "bg-petal"
+                    className={`min-h-14 truncate rounded-2xl px-4 py-3 text-lg font-semibold active:scale-[0.98] ${focus} ${
+                      picked ? "border border-rose bg-rose text-white" : "glass"
                     }`}
                   >
                     {c.name}
@@ -418,24 +424,25 @@ export default function PlayPage() {
   } else if (phase === "voting" || phase === "reveal") {
     content = (
       <div>
-        <h1 className="text-4xl font-extrabold">Eyes on the big screen.</h1>
+        <h1 className="text-4xl font-bold">Eyes on the big screen.</h1>
       </div>
     );
   } else {
     content = (
       <div>
-        <h1 className="text-4xl font-extrabold">You&apos;re in, {player.name}.</h1>
+        <h1 className="text-4xl font-bold">You&apos;re in, {player.name}.</h1>
         <p className={muted}>The next prompt shows up here.</p>
       </div>
     );
   }
 
   return (
-    <main className={`${display.className} min-h-dvh bg-blush px-6 py-12 text-ink`}>
+    <main className="min-h-dvh px-6 pb-12 pt-6">
       <div className="mx-auto flex max-w-md flex-col gap-6">
+        {checked && player && <Logo className="text-xl" />}
         {content}
         {error && (
-          <p role="alert" className="rounded-xl bg-rose px-4 py-3 font-semibold text-petal">
+          <p role="alert" className="glass rounded-2xl border-rose! px-5 py-3 font-semibold">
             {error}
           </p>
         )}

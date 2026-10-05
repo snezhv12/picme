@@ -1,36 +1,80 @@
 @import "tailwindcss";
 
-/* PicMe palette: light pink ground, near-black berry ink for high contrast */
+/* PicMe: very light pink, glass panels, dark plum-gray text */
 @theme {
-  --color-blush: #ffd9e6;
-  --color-petal: #fff4f8;
-  --color-ink: #2a0e1f;
-  --color-rose: #c2185b;
+  --font-sans: var(--font-instrument-sans), ui-sans-serif, system-ui, sans-serif;
+  --color-paper: #fff5f8;
+  --color-blush: #fbe3ea;
+  --color-ink: #3b1f2b;
+  --color-rose: #e8789a;
+}
+
+html {
+  background: var(--color-paper);
 }
 
 body {
-  background: var(--color-blush);
   color: var(--color-ink);
 }
 
-/* Scoreboard confetti: falls once, then stays off screen */
-.confetti-piece {
-  position: absolute;
-  top: -5vh;
-  border-radius: 2px;
-  animation-name: confetti-fall;
-  animation-timing-function: cubic-bezier(0.3, 0.6, 0.5, 1);
-  animation-fill-mode: both;
+/* Soft gradient behind everything (a fixed layer, so it also stays put on iOS) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background: linear-gradient(165deg, var(--color-paper) 0%, var(--color-paper) 30%, var(--color-blush) 100%);
 }
 
-@keyframes confetti-fall {
-  to {
-    transform: translate(var(--drift), 110vh) rotate(720deg);
+/* Glass: cards, panels and secondary buttons */
+@utility glass {
+  background-color: rgb(255 255 255 / 0.55);
+  border: 1px solid rgb(255 255 255 / 0.85);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+  backdrop-filter: blur(18px) saturate(1.2);
+  box-shadow: 0 8px 32px rgb(59 31 43 / 0.06);
+}
+
+/* Thin glassy photo frame with softly rounded corners */
+@utility frame {
+  padding: 0.5rem;
+  border-radius: 1.5rem;
+  background-color: rgb(255 255 255 / 0.55);
+  border: 1px solid rgb(255 255 255 / 0.9);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 12px 40px rgb(59 31 43 / 0.1);
+
+  & img {
+    border-radius: 1.1rem;
+  }
+}
+
+/* One gentle heartbeat when the uploader is revealed */
+.heart-pulse {
+  animation: heart-pulse 1.4s ease-in-out 1 both;
+}
+
+@keyframes heart-pulse {
+  0% {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+  35% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  60% {
+    transform: scale(0.95);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .confetti {
-    display: none;
+  .heart-pulse {
+    animation: none;
   }
 }

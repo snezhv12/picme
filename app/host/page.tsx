@@ -17,8 +17,7 @@ import {
 } from "@/lib/supabase";
 import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, unplayed, type Pick } from "@/lib/prompts";
 import { secondsLeft, useNow } from "@/lib/useNow";
-import { display, hand } from "@/lib/fonts";
-import { Confetti } from "@/app/_components/Confetti";
+import { Heart, Logo } from "@/app/_components/Heart";
 
 // Upload time in seconds; null = no timer (open until everyone has uploaded)
 const TIMER_OPTIONS: (number | null)[] = [20, 40, 60, null];
@@ -245,10 +244,15 @@ export default function HostPage() {
   // --- Pieces ----------------------------------------------------------------
 
   const focus =
-    "focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-rose";
-  const btnPrimary = `rounded-full bg-ink px-10 py-5 text-2xl font-bold text-petal transition active:scale-[0.98] disabled:opacity-30 ${focus}`;
-  const btnSecondary = `rounded-full border-[3px] border-ink px-7 py-3.5 text-xl font-bold transition active:scale-[0.98] disabled:opacity-30 ${focus}`;
-  const label = "text-xl font-bold uppercase tracking-widest text-rose";
+    "focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ink";
+  const btnPrimary = `rounded-full bg-rose px-10 py-5 text-2xl font-semibold text-white shadow-[0_10px_30px_rgb(232_120_154/0.35)] transition hover:brightness-105 active:scale-[0.98] disabled:opacity-40 disabled:shadow-none ${focus}`;
+  const btnSecondary = `glass rounded-full px-7 py-3.5 text-xl font-semibold transition hover:bg-white/80 active:scale-[0.98] disabled:opacity-40 ${focus}`;
+  // A choice button: glass, or solid rose when selected
+  const chip = (on: boolean, size = "px-7 py-3.5 text-xl") =>
+    `rounded-full font-semibold transition active:scale-[0.98] disabled:opacity-40 ${size} ${focus} ${
+      on ? "border border-rose bg-rose text-white" : "glass hover:bg-white/80"
+    }`;
+  const label = "text-xl font-semibold uppercase tracking-[0.18em] text-ink/60";
 
   const primaryButton = primary && (
     <button onClick={primary.run} disabled={busy || primary.disabled} className={btnPrimary}>
@@ -257,13 +261,20 @@ export default function HostPage() {
   );
 
   const qr = (
-    <figure className="w-[min(22vw,300px)] shrink-0 rotate-2 bg-petal p-4 pb-2 shadow-2xl shadow-ink/20">
+    <figure className="glass w-[min(22vw,300px)] shrink-0 rounded-3xl p-4">
       {joinUrl && (
-        <QRCodeSVG value={joinUrl} size={512} bgColor="#fff4f8" fgColor="#2a0e1f" className="h-auto w-full" />
+        <QRCodeSVG
+          value={joinUrl}
+          size={512}
+          bgColor="#ffffff"
+          fgColor="#3b1f2b"
+          marginSize={2}
+          className="h-auto w-full rounded-2xl"
+        />
       )}
-      <figcaption className="py-2 text-center">
-        <span className={`${hand.className} block text-4xl`}>Scan to join</span>
-        <span className="block break-all text-lg font-bold">{joinUrl.replace(/^https?:\/\//, "")}</span>
+      <figcaption className="pt-3 text-center">
+        <span className="block text-2xl font-semibold">Scan to join</span>
+        <span className="block break-all text-lg text-ink/70">{joinUrl.replace(/^https?:\/\//, "")}</span>
       </figcaption>
     </figure>
   );
@@ -277,7 +288,7 @@ export default function HostPage() {
     body = (
       <section className="flex flex-1 items-start justify-between gap-[4vw] pt-6">
         <div className="flex max-w-5xl flex-1 flex-col gap-7">
-          <h1 className="text-[clamp(2.5rem,4.5vw,4.5rem)] font-extrabold leading-[1.05]">
+          <h1 className="text-[clamp(2.5rem,4.5vw,4.5rem)] font-bold leading-[1.05]">
             {usedPrompts.length > 0 ? "Next round. Pick a category." : "Pick a category."}
           </h1>
 
@@ -286,9 +297,7 @@ export default function HostPage() {
               onClick={() => draw(SHUFFLE)}
               disabled={allPlayed(SHUFFLE)}
               aria-pressed={drawnFrom === SHUFFLE}
-              className={`rounded-full px-7 py-3.5 text-xl font-bold transition active:scale-[0.98] disabled:opacity-30 ${focus} ${
-                drawnFrom === SHUFFLE ? "bg-ink text-petal" : "bg-rose text-petal"
-              }`}
+              className={chip(drawnFrom === SHUFFLE)}
             >
               Shuffle
             </button>
@@ -299,9 +308,7 @@ export default function HostPage() {
                 disabled={allPlayed(c.id)}
                 aria-pressed={drawnFrom === c.id}
                 title={allPlayed(c.id) ? "All prompts in this category have been played" : undefined}
-                className={`${btnSecondary} ${drawnFrom === c.id ? "bg-ink text-petal" : ""} ${
-                  allPlayed(c.id) ? "line-through" : ""
-                }`}
+                className={`${chip(drawnFrom === c.id)} ${allPlayed(c.id) ? "line-through" : ""}`}
               >
                 {c.name}
               </button>
@@ -321,18 +328,18 @@ export default function HostPage() {
               placeholder="…or write my own prompt"
               maxLength={120}
               aria-label="Write my own prompt"
-              className="min-w-0 flex-1 rounded-2xl border-[3px] border-ink bg-petal px-5 py-3 text-xl outline-none placeholder:text-ink/50 focus:ring-4 focus:ring-rose"
+              className="glass min-w-0 flex-1 rounded-full px-6 py-3 text-xl outline-none placeholder:text-ink/50 focus:ring-2 focus:ring-rose"
             />
             <button type="submit" disabled={!custom.trim()} className={btnSecondary}>
               Use
             </button>
           </form>
 
-          <div className="min-h-44 rounded-3xl bg-petal p-7 shadow-xl shadow-ink/10">
+          <div className="glass min-h-44 rounded-[2rem] p-8">
             {preview ? (
               <>
                 <p className={label}>{previewCategory ?? "Your own prompt"}</p>
-                <p className="mt-2 text-[clamp(2rem,3.6vw,3.5rem)] font-extrabold leading-tight">
+                <p className="mt-2 text-[clamp(2rem,3.6vw,3.5rem)] font-bold leading-tight">
                   {preview.prompt}
                 </p>
                 {drawnFrom && (
@@ -357,16 +364,14 @@ export default function HostPage() {
           <div className="flex flex-wrap items-center gap-6">
             {primaryButton}
             <div role="radiogroup" aria-label="Upload time" className="flex items-center gap-2">
-              <span className="mr-2 text-xl font-bold">Timer</span>
+              <span className="mr-2 text-xl font-semibold">Timer</span>
               {TIMER_OPTIONS.map((s) => (
                 <button
                   key={s ?? "none"}
                   role="radio"
                   aria-checked={seconds === s}
                   onClick={() => setSeconds(s)}
-                  className={`rounded-full border-[3px] border-ink px-5 py-2 text-xl font-bold ${focus} ${
-                    seconds === s ? "bg-ink text-petal" : ""
-                  }`}
+                  className={chip(seconds === s, "px-5 py-2 text-xl")}
                 >
                   {s === null ? "No timer" : `${s}s`}
                 </button>
@@ -378,21 +383,21 @@ export default function HostPage() {
         <aside className="flex w-[min(24vw,320px)] shrink-0 flex-col items-center gap-6">
           {qr}
           <div className="w-full">
-            <p className="text-2xl font-extrabold">
+            <p className="text-2xl font-bold">
               {players.length} {players.length === 1 ? "player" : "players"}
             </p>
             <ul className="mt-3 flex flex-wrap gap-2">
               {players.map((p) => (
                 <li
                   key={p.id}
-                  className="flex items-center gap-1 rounded-full bg-petal py-1 pl-4 pr-1 text-lg font-semibold"
+                  className="glass flex items-center gap-1 rounded-full py-1 pl-4 pr-1 text-lg font-medium"
                 >
                   {p.name}
                   <button
                     onClick={() => removePlayer(p.id)}
                     disabled={busy}
                     aria-label={`Remove ${p.name}`}
-                    className={`grid h-7 w-7 place-items-center rounded-full text-base text-ink/60 hover:bg-ink hover:text-petal ${focus}`}
+                    className={`grid h-7 w-7 place-items-center rounded-full text-sm text-ink/50 hover:bg-rose hover:text-white ${focus}`}
                   >
                     ✕
                   </button>
@@ -409,13 +414,13 @@ export default function HostPage() {
       <section className="flex flex-1 items-center justify-between gap-[5vw]">
         <div className="flex max-w-4xl flex-1 flex-col gap-8">
           {roundCategory && <p className={label}>{roundCategory}</p>}
-          <h1 className="text-[clamp(3rem,6.5vw,7rem)] font-extrabold leading-[1.02]">{round.prompt}</h1>
+          <h1 className="text-[clamp(3rem,6.5vw,7rem)] font-bold leading-[1.02]">{round.prompt}</h1>
 
           {noPhotos ? (
             <p className="text-4xl font-bold">No photos this round.</p>
           ) : noTimer ? (
             <p className="flex items-baseline gap-6">
-              <span className="text-[clamp(5rem,11vw,10rem)] font-extrabold leading-none tabular-nums">
+              <span className="text-[clamp(5rem,11vw,10rem)] font-bold leading-none tabular-nums">
                 {photos.length} of {players.length}
               </span>
               <span className="text-3xl font-semibold text-ink/75">photos in</span>
@@ -423,7 +428,7 @@ export default function HostPage() {
           ) : (
             <div className="flex items-baseline gap-8">
               <span
-                className={`text-[clamp(5rem,11vw,10rem)] font-extrabold leading-none tabular-nums ${
+                className={`text-[clamp(5rem,11vw,10rem)] font-bold leading-none tabular-nums ${
                   left !== null && left <= 5 ? "text-rose" : ""
                 }`}
               >
@@ -451,25 +456,30 @@ export default function HostPage() {
     const reveal = phase === "reveal";
     body = (
       <section className="flex flex-1 flex-col items-center justify-center gap-6 pt-2">
-        <h1 className="max-w-5xl text-center text-[clamp(2rem,4vw,3.75rem)] font-extrabold leading-tight">
+        <h1 className="max-w-5xl text-center text-[clamp(2rem,4vw,3.75rem)] font-bold leading-tight">
           {round.prompt}
         </h1>
 
         {current && (
-          <figure className="-rotate-1 bg-petal p-5 pb-3 shadow-2xl shadow-ink/20">
+          <figure className="frame">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={photoUrl(current.path)}
               alt={reveal ? `Photo by ${names[current.player_id] ?? "someone"}` : "Mystery photo"}
-              className="max-h-[56vh] max-w-[80vw] object-contain"
+              className="max-h-[54vh] max-w-[80vw] object-contain"
             />
-            <figcaption className="pt-3 text-center">
-              <span
-                className={`${hand.className} block text-6xl leading-none ${reveal ? "" : "text-ink/40"}`}
-              >
-                {reveal ? names[current.player_id] ?? "Someone" : "Who took this?"}
-              </span>
-              {reveal && <span className="mt-1 block text-2xl font-bold">Tell us the story</span>}
+            <figcaption className="px-4 pb-2 pt-4 text-center">
+              {reveal ? (
+                <>
+                  <span className="flex items-center justify-center gap-3 text-5xl font-semibold leading-none">
+                    {names[current.player_id] ?? "Someone"}
+                    <Heart key={current.id} className="heart-pulse h-10 w-10 text-rose" strokeWidth={1.75} />
+                  </span>
+                  <span className="mt-2 block text-2xl text-ink/70">Tell us the story</span>
+                </>
+              ) : (
+                <span className="block text-4xl font-semibold leading-none text-ink/45">Who took this?</span>
+              )}
             </figcaption>
           </figure>
         )}
@@ -492,7 +502,7 @@ export default function HostPage() {
     body = (
       <section className="flex flex-1 flex-col gap-8 pt-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <h1 className="text-[clamp(2.5rem,5vw,5rem)] font-extrabold leading-none">All the photos</h1>
+          <h1 className="text-[clamp(2.5rem,5vw,5rem)] font-bold leading-none">All the photos</h1>
           <button onClick={() => setGallery(null)} className={btnSecondary}>
             Back to scores
           </button>
@@ -501,14 +511,14 @@ export default function HostPage() {
           <p className="text-3xl font-semibold">No photos this game.</p>
         ) : (
           <ul className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-8">
-            {gallery.map((g, i) => (
+            {gallery.map((g) => (
               <li key={g.id}>
-                <figure className={`bg-petal p-3 pb-2 shadow-xl shadow-ink/15 ${i % 2 ? "rotate-1" : "-rotate-1"}`}>
+                <figure className="frame">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={photoUrl(g.path)} alt={`${g.prompt}, by ${g.name}`} className="aspect-square w-full object-cover" />
-                  <figcaption className="pt-2">
-                    <span className={`${hand.className} block text-4xl leading-none`}>{g.name}</span>
-                    <span className="block text-base font-semibold text-ink/70">{g.prompt}</span>
+                  <figcaption className="px-2 pb-1 pt-3">
+                    <span className="block text-2xl font-semibold leading-tight">{g.name}</span>
+                    <span className="block text-base text-ink/65">{g.prompt}</span>
                   </figcaption>
                 </figure>
               </li>
@@ -520,8 +530,7 @@ export default function HostPage() {
   } else if (phase === "scoreboard") {
     body = (
       <section className="flex flex-1 flex-col items-center justify-center gap-8">
-        <Confetti />
-        <h1 className="text-[clamp(3rem,6vw,6rem)] font-extrabold leading-none">Final scores</h1>
+        <h1 className="text-[clamp(3rem,6vw,6rem)] font-bold leading-none">Final scores</h1>
         <ol className="flex w-full max-w-3xl flex-col gap-3">
           {scores.map((s, i) => {
             const rank = rankOf(scores, i);
@@ -530,17 +539,16 @@ export default function HostPage() {
               <li
                 key={s.player_id}
                 className={`flex items-baseline gap-6 rounded-3xl px-8 ${
-                  winner ? "bg-ink py-6 text-petal" : "bg-petal py-4"
+                  winner ? "border border-rose bg-rose py-6 text-white" : "glass py-4"
                 }`}
               >
                 <span className="w-12 text-3xl font-bold tabular-nums opacity-70">
                   {i === 0 || scores[i - 1].points !== s.points ? rank : ""}
                 </span>
-                <span className={`flex-1 truncate font-bold ${winner ? "text-5xl" : "text-4xl"}`}>
-                  {winner && "👑 "}
+                <span className={`flex-1 truncate font-semibold ${winner ? "text-5xl" : "text-4xl"}`}>
                   {s.name}
                 </span>
-                <span className="text-4xl font-extrabold tabular-nums">
+                <span className="text-4xl font-bold tabular-nums">
                   {s.points}{" "}
                   <span className="text-2xl font-semibold opacity-70">{s.points === 1 ? "pt" : "pts"}</span>
                 </span>
@@ -564,12 +572,10 @@ export default function HostPage() {
   }
 
   return (
-    <main className={`${display.className} flex min-h-dvh flex-col bg-blush px-[5vw] py-8 text-ink`}>
+    <main className="flex min-h-dvh flex-col px-[5vw] py-8">
       <header className="flex items-baseline justify-between">
-        <p className="text-4xl font-extrabold tracking-tight">
-          Pic<span className="text-rose">Me</span>
-        </p>
-        <div className="flex items-baseline gap-6 text-lg font-semibold text-ink/70">
+        <Logo className="text-4xl" />
+        <div className="flex items-baseline gap-6 text-lg font-medium text-ink/70">
           {phase !== "lobby" && phase !== "scoreboard" && (
             <span>
               {players.length} {players.length === 1 ? "player" : "players"}
