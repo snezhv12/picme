@@ -225,6 +225,15 @@ export default function PlayPage() {
     </figure>
   );
 
+  // Whole photo, as large as the screen allows, in an instant-photo frame
+  const bigPhoto = (path: string, caption: string, alt: string) => (
+    <figure className="-rotate-1 bg-petal p-3 pb-2 shadow-2xl shadow-ink/20">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={photoUrl(path)} alt={alt} className="mx-auto max-h-[55dvh] w-full object-contain" />
+      <figcaption className={`${hand.className} pt-1 text-center text-4xl leading-tight`}>{caption}</figcaption>
+    </figure>
+  );
+
   let content: ReactNode = null;
 
   if (!checked) {
@@ -292,9 +301,12 @@ export default function PlayPage() {
       </div>
     );
   } else if (phase === "uploading" && round) {
-    const open = left !== null && left > 0;
+    // No timer: open until everyone's in or the host closes uploads
+    const noTimer = round.ends_at === null;
+    const open = noTimer || (left !== null && left > 0);
     const cat = categoryName(round.category);
     const hint = hintFor(round.prompt);
+    const playerCount = players?.length ?? 0;
     content = (
       <div className="flex flex-col gap-7">
         <div>
@@ -303,7 +315,7 @@ export default function PlayPage() {
           {hint && <p className="mt-2 text-base font-semibold text-ink/70">{hint}</p>}
         </div>
 
-        {open && (
+        {open && !noTimer && left !== null && (
           <p
             className={`text-7xl font-extrabold leading-none tabular-nums ${left <= 5 ? "text-rose" : ""}`}
           >
@@ -313,6 +325,12 @@ export default function PlayPage() {
         )}
 
         {myPhoto && polaroid(myPhoto.path, open ? "Sent" : "In!")}
+
+        {open && myPhoto && !busy && (
+          <p className="text-center text-lg font-bold" aria-live="polite">
+            Waiting for others: {photos.length} of {playerCount} photos in
+          </p>
+        )}
 
         {(open || busy) && (
           <>
@@ -336,29 +354,40 @@ export default function PlayPage() {
           </>
         )}
 
-        {left === 0 && !busy && (
+        {!open && !busy && (
           <p className="text-3xl font-extrabold">
-            {myPhoto ? "Time's up. Your photo is in." : "Time's up. You'll be in the next round."}
+            {noTimer ? "Uploads are closed." : "Time's up."}{" "}
+            {myPhoto ? "Your photo is in." : "You'll be in the next round."}
           </p>
         )}
       </div>
     );
-  } else if (phase === "voting" && round && current) {
+  } else if ((phase === "voting" || phase === "reveal") && round && current) {
+    const mine = current.player_id === player.id;
+    const owner = names[current.player_id] ?? "Someone";
     const guess = myVotes[current.id];
     content = (
-      <div className="flex flex-col gap-6">
-        <p className="text-lg font-semibold text-ink/75">{round.prompt}</p>
-        {current.player_id === player.id ? (
+      <div className="flex flex-col gap-5">
+        <h1 className="text-2xl font-extrabold leading-tight">{round.prompt}</h1>
+
+        {phase === "reveal" ? (
           <>
-            {polaroid(current.path, "Yours", true)}
+            {bigPhoto(current.path, owner, `Photo by ${owner}`)}
+            <p className="text-center text-2xl font-extrabold">
+              {mine ? "Your turn! Tell us the story." : "Tell us the story"}
+            </p>
+          </>
+        ) : mine ? (
+          <>
+            {bigPhoto(current.path, "Yours", "Your photo")}
             <div>
-              <h1 className="text-4xl font-extrabold">This one&apos;s yours.</h1>
+              <p className="text-3xl font-extrabold">This one&apos;s yours.</p>
               <p className={muted}>Keep a straight face.</p>
             </div>
           </>
         ) : (
           <>
-            {polaroid(current.path, "Who took this?", true)}
+            {bigPhoto(current.path, "Who took this?", "Mystery photo")}
             <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Who took this?">
               {others.map((c) => {
                 const picked = guess === c.id;

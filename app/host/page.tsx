@@ -20,7 +20,8 @@ import { secondsLeft, useNow } from "@/lib/useNow";
 import { display, hand } from "@/lib/fonts";
 import { Confetti } from "@/app/_components/Confetti";
 
-const TIMER_OPTIONS = [20, 40, 60];
+// Upload time in seconds; null = no timer (open until everyone has uploaded)
+const TIMER_OPTIONS: (number | null)[] = [20, 40, 60, null];
 
 type Action = { label: string; run: () => void; disabled?: boolean } | null;
 type GalleryItem = { id: string; path: string; prompt: string; name: string };
@@ -40,7 +41,7 @@ export default function HostPage() {
   const [preview, setPreview] = useState<Pick | null>(null);
   const [drawnFrom, setDrawnFrom] = useState<string | null>(null);
   const [custom, setCustom] = useState("");
-  const [seconds, setSeconds] = useState(TIMER_OPTIONS[0]);
+  const [seconds, setSeconds] = useState<number | null>(TIMER_OPTIONS[0]);
 
   const [gallery, setGallery] = useState<GalleryItem[] | null>(null);
 
@@ -122,6 +123,7 @@ export default function HostPage() {
   const now = useNow(phase === "uploading");
   const left = secondsLeft(round?.ends_at, now);
   const timeUp = left === 0;
+  const noTimer = !!round && round.ends_at === null;
 
   // --- Lobby ---------------------------------------------------------------
 
@@ -217,7 +219,7 @@ export default function HostPage() {
     primary =
       timeUp && photos.length === 0
         ? { label: "Back to lobby", run: backToLobby }
-        : { label: "End timer now", run: endUploads };
+        : { label: noTimer ? "Close uploads" : "End timer now", run: endUploads };
   } else if (phase === "voting") {
     primary = { label: "Close voting", run: closeVoting, disabled: !current };
   } else if (phase === "reveal") {
@@ -358,7 +360,7 @@ export default function HostPage() {
               <span className="mr-2 text-xl font-bold">Timer</span>
               {TIMER_OPTIONS.map((s) => (
                 <button
-                  key={s}
+                  key={s ?? "none"}
                   role="radio"
                   aria-checked={seconds === s}
                   onClick={() => setSeconds(s)}
@@ -366,7 +368,7 @@ export default function HostPage() {
                     seconds === s ? "bg-ink text-petal" : ""
                   }`}
                 >
-                  {s}s
+                  {s === null ? "No timer" : `${s}s`}
                 </button>
               ))}
             </div>
@@ -411,6 +413,13 @@ export default function HostPage() {
 
           {noPhotos ? (
             <p className="text-4xl font-bold">No photos this round.</p>
+          ) : noTimer ? (
+            <p className="flex items-baseline gap-6">
+              <span className="text-[clamp(5rem,11vw,10rem)] font-extrabold leading-none tabular-nums">
+                {photos.length} of {players.length}
+              </span>
+              <span className="text-3xl font-semibold text-ink/75">photos in</span>
+            </p>
           ) : (
             <div className="flex items-baseline gap-8">
               <span
@@ -428,7 +437,7 @@ export default function HostPage() {
 
           <div className="flex flex-wrap items-center gap-4">
             {primaryButton}
-            {!timeUp && (
+            {!timeUp && !noTimer && (
               <button onClick={addTime} disabled={busy} className={btnSecondary}>
                 +10 seconds
               </button>
