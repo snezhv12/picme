@@ -19,6 +19,7 @@ import { CATEGORIES, SHUFFLE, categoryName, hintFor, pickPrompt, unplayed } from
 import { compressImage } from "@/lib/compress";
 import { secondsLeft, useNow } from "@/lib/useNow";
 import { Heart, Logo } from "@/app/_components/Heart";
+import { InstallHint } from "@/app/_components/InstallHint";
 
 const PLAYER_KEY = "picme-player";
 const VOTES_KEY = "picme-votes"; // photo id -> guessed player id, only on this phone
@@ -355,6 +356,7 @@ export default function PlayPage() {
         <button type="submit" disabled={busy || !name.trim()} className={btnPrimary}>
           {busy ? "Joining…" : "Join game"}
         </button>
+        <InstallHint />
       </form>
     );
   } else if (phase === "scoreboard") {

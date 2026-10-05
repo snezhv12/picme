@@ -11,6 +11,12 @@ const instrumentSans = Instrument_Sans({
 export const metadata: Metadata = {
   title: "PicMe",
   description: "Show a photo. Everyone guesses whose it is.",
+  applicationName: "PicMe",
+  // iPhone: open full screen from the home screen, with a light status bar
+  appleWebApp: { capable: true, title: "PicMe", statusBarStyle: "default" },
+  formatDetection: { telephone: false },
+  // Older iPhones (before iOS 16.4) ignore the manifest and need this tag
+  other: { "apple-mobile-web-app-capable": "yes" },
 };
 
 export const viewport: Viewport = {
