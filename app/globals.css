@@ -1,26 +1,36 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* PicMe palette: light pink ground, near-black berry ink for high contrast */
+@theme {
+  --color-blush: #ffd9e6;
+  --color-petal: #fff4f8;
+  --color-ink: #2a0e1f;
+  --color-rose: #c2185b;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-blush);
+  color: var(--color-ink);
+}
+
+/* Scoreboard confetti: falls once, then stays off screen */
+.confetti-piece {
+  position: absolute;
+  top: -5vh;
+  border-radius: 2px;
+  animation-name: confetti-fall;
+  animation-timing-function: cubic-bezier(0.3, 0.6, 0.5, 1);
+  animation-fill-mode: both;
+}
+
+@keyframes confetti-fall {
+  to {
+    transform: translate(var(--drift), 110vh) rotate(720deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti {
+    display: none;
+  }
 }

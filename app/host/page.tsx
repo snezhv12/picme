@@ -1,66 +1,69 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   supabase,
   photoUrl,
+  rankOf,
+  GAME_STATE_COLS,
+  PHOTO_COLS,
+  ROUND_COLS,
   type GameState,
   type Photo,
   type Player,
   type Round,
+  type Score,
 } from "@/lib/supabase";
+import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, type Pick } from "@/lib/prompts";
+import { secondsLeft, useNow } from "@/lib/useNow";
 import { display, hand } from "@/lib/fonts";
+import { Confetti } from "@/app/_components/Confetti";
 
-const PROMPTS = [
-  "The last photo you took of food",
-  "Your most chaotic screenshot",
-  "A photo that needs context",
-  "The oldest photo in your camera roll",
-  "Your worst selfie",
-  "The view from a trip you loved",
-  "A photo with the birthday star",
-  "Something you bought and regret",
-  "A photo that sums up your summer",
-  "The most recent photo of a pet",
-  "Your fridge, right now",
-  "A photo you'd never post",
-];
+const TIMER_OPTIONS = [20, 40, 60];
 
 type Action = { label: string; run: () => void; disabled?: boolean } | null;
+type GalleryItem = { id: string; path: string; prompt: string; name: string };
+
+const noSubscribe = () => () => {};
 
 export default function HostPage() {
   const [gs, setGs] = useState<GameState | null>(null);
   const [round, setRound] = useState<Round | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [prompt, setPrompt] = useState("");
-  const [joinUrl, setJoinUrl] = useState("");
+  const [usedPrompts, setUsedPrompts] = useState<string[]>([]);
+  const [scores, setScores] = useState<Score[]>([]);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    setJoinUrl(window.location.origin);
-  }, []);
+  // Lobby setup, only on this screen until the round starts
+  const [preview, setPreview] = useState<Pick | null>(null);
+  const [drawnFrom, setDrawnFrom] = useState<string | null>(null);
+  const [custom, setCustom] = useState("");
+  const [seconds, setSeconds] = useState(TIMER_OPTIONS[0]);
+
+  const [gallery, setGallery] = useState<GalleryItem[] | null>(null);
+
+  const joinUrl = useSyncExternalStore(
+    noSubscribe,
+    () => window.location.origin,
+    () => ""
+  );
 
   const load = useCallback(async () => {
-    const [{ data: g }, { data: p }] = await Promise.all([
-      supabase
-        .from("game_state")
-        .select("current_round_id,current_photo_id,show_answer")
-        .eq("id", 1)
-        .single(),
+    const [{ data: g }, { data: p }, { data: rs }] = await Promise.all([
+      supabase.from("game_state").select(GAME_STATE_COLS).eq("id", 1).single(),
       supabase.from("players").select("id,name").order("created_at"),
+      supabase.from("rounds").select("prompt"),
     ]);
     setGs(g ?? null);
     setPlayers(p ?? []);
+    setUsedPrompts((rs ?? []).map((r) => r.prompt));
 
     if (g?.current_round_id) {
       const [{ data: r }, { data: ph }] = await Promise.all([
-        supabase.from("rounds").select("id,prompt,status").eq("id", g.current_round_id).single(),
-        supabase
-          .from("photos")
-          .select("id,round_id,player_id,path,revealed")
-          .eq("round_id", g.current_round_id),
+        supabase.from("rounds").select(ROUND_COLS).eq("id", g.current_round_id).single(),
+        supabase.from("photos").select(PHOTO_COLS).eq("round_id", g.current_round_id),
       ]);
       setRound(r ?? null);
       setPhotos(ph ?? []);
@@ -68,23 +71,32 @@ export default function HostPage() {
       setRound(null);
       setPhotos([]);
     }
+
+    if (g?.phase === "scoreboard") {
+      const { data: s } = await supabase.rpc("scoreboard");
+      setScores(s ?? []);
+    } else {
+      setGallery(null);
+    }
   }, []);
 
+  // Load once the live channel is up (and again after any reconnect)
   useEffect(() => {
-    load();
     const ch = supabase
       .channel("host")
       .on("postgres_changes", { event: "*", schema: "public", table: "game_state" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "rounds" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "photos" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "players" }, load)
-      .subscribe();
+      .subscribe((status) => {
+        if (status !== "CLOSED") load();
+      });
     return () => {
       supabase.removeChannel(ch);
     };
   }, [load]);
 
-  async function run(fn: () => Promise<unknown>) {
+  async function run(fn: () => PromiseLike<unknown>) {
     if (busy) return;
     setBusy(true);
     try {
@@ -95,87 +107,118 @@ export default function HostPage() {
     }
   }
 
-  async function pickNext() {
-    const left = photos.filter((p) => !p.revealed);
-    if (!left.length) return;
-    const next = left[Math.floor(Math.random() * left.length)];
-    await supabase.from("photos").update({ revealed: true }).eq("id", next.id);
-    await supabase
-      .from("game_state")
-      .update({ current_photo_id: next.id, show_answer: false })
-      .eq("id", 1);
-  }
-
-  const startRound = (text: string) =>
-    run(async () => {
-      const t = text.trim();
-      if (!t) return;
-      const { data: r, error } = await supabase
-        .from("rounds")
-        .insert({ prompt: t })
-        .select("id")
-        .single();
-      if (error || !r) return;
-      await supabase
-        .from("game_state")
-        .update({ current_round_id: r.id, current_photo_id: null, show_answer: false })
-        .eq("id", 1);
-      setPrompt("");
-    });
-
-  const startReveal = () =>
-    run(async () => {
-      if (!round) return;
-      await supabase.from("rounds").update({ status: "revealing" }).eq("id", round.id);
-      await pickNext();
-    });
-
-  const nextPhoto = () => run(pickNext);
-
-  const showAnswer = () =>
-    run(async () => {
-      await supabase.from("game_state").update({ show_answer: true }).eq("id", 1);
-    });
-
-  const endRound = () =>
-    run(async () => {
-      if (round) await supabase.from("rounds").update({ status: "done" }).eq("id", round.id);
-      await supabase
-        .from("game_state")
-        .update({ current_round_id: null, current_photo_id: null, show_answer: false })
-        .eq("id", 1);
-    });
-
-  const newGame = () => {
-    if (!confirm("Start a new game? This removes all players and photos.")) return;
-    run(async () => {
-      await supabase
-        .from("game_state")
-        .update({ current_round_id: null, current_photo_id: null, show_answer: false })
-        .eq("id", 1);
-      await supabase.from("rounds").delete().not("id", "is", null);
-      await supabase.from("players").delete().not("id", "is", null);
-    });
-  };
-
+  const phase = gs?.phase ?? "lobby";
+  const current = photos.find((p) => p.id === gs?.current_photo_id) ?? null;
   const names = useMemo(
     () => Object.fromEntries(players.map((p) => [p.id, p.name])),
     [players]
   );
-  const current = photos.find((p) => p.id === gs?.current_photo_id) ?? null;
-  const shown = photos.filter((p) => p.revealed).length;
-  const remaining = photos.length - shown;
-  const phase = !round || round.status === "done" ? "setup" : round.status;
+  const isLast = !!current && current.position === photos.length;
+  const allIn = players.length > 0 && photos.length >= players.length;
+  const eligibleVoters = current
+    ? players.filter((p) => p.id !== current.player_id).length
+    : 0;
 
-  // The one main button for each moment (Space or → also triggers it)
+  const now = useNow(phase === "uploading");
+  const left = secondsLeft(round?.ends_at, now);
+  const timeUp = left === 0;
+
+  // --- Lobby ---------------------------------------------------------------
+
+  function draw(from: string) {
+    setDrawnFrom(from);
+    setPreview(pickPrompt(from, usedPrompts, preview?.prompt));
+  }
+
+  function applyCustom() {
+    const t = custom.trim();
+    if (!t) return;
+    setDrawnFrom(null);
+    setPreview({ prompt: t, category: "" });
+    setCustom("");
+  }
+
+  const startRound = () =>
+    run(async () => {
+      if (!preview) return;
+      const { error } = await supabase.rpc("start_round", {
+        p_prompt: preview.prompt,
+        p_category: preview.category || null,
+        p_seconds: seconds,
+      });
+      if (!error) {
+        setPreview(null);
+        setDrawnFrom(null);
+      }
+    });
+
+  const removePlayer = (id: string) =>
+    run(() => supabase.from("players").delete().eq("id", id));
+
+  // --- Game moves (all on the server, so every screen stays in step) -------
+
+  const addTime = () => run(() => supabase.rpc("add_time", { p_seconds: 10 }));
+  const endUploads = () => run(() => supabase.rpc("end_uploads"));
+  const closeVoting = () =>
+    run(() => supabase.rpc("close_voting", { p_photo: current?.id }));
+  const nextPhoto = () => run(() => supabase.rpc("next_photo", { p_current: current?.id }));
+  const backToLobby = () => run(() => supabase.rpc("back_to_lobby"));
+  const endGame = () => run(() => supabase.rpc("end_game"));
+  const playAgain = () => run(() => supabase.rpc("play_again"));
+
+  const newGame = () => {
+    if (!confirm("Start a new game? This removes all players, photos and votes.")) return;
+    run(() => supabase.rpc("new_game"));
+  };
+
+  // Uploads end by themselves when the clock runs out (after a short grace for
+  // uploads already on their way) or as soon as everyone has a photo in
+  const autoEnd = phase === "uploading" && photos.length > 0 && (timeUp || allIn);
+  useEffect(() => {
+    if (!autoEnd) return;
+    const t = setTimeout(() => supabase.rpc("end_uploads").then(load), timeUp ? 3000 : 1500);
+    return () => clearTimeout(t);
+  }, [autoEnd, timeUp, load]);
+
+  async function openGallery() {
+    const [{ data: ph }, { data: rs }] = await Promise.all([
+      supabase.from("photos").select("id,path,round_id,player_id,position,created_at"),
+      supabase.from("rounds").select("id,prompt,created_at"),
+    ]);
+    const roundOrder = new Map((rs ?? []).map((r) => [r.id, r]));
+    const items = (ph ?? [])
+      .filter((p) => roundOrder.has(p.round_id))
+      .sort((a, b) => {
+        const ra = roundOrder.get(a.round_id)!.created_at;
+        const rb = roundOrder.get(b.round_id)!.created_at;
+        if (ra !== rb) return ra < rb ? -1 : 1;
+        return (a.position ?? 999) - (b.position ?? 999);
+      })
+      .map((p) => ({
+        id: p.id,
+        path: p.path,
+        prompt: roundOrder.get(p.round_id)!.prompt,
+        name: names[p.player_id] ?? "Someone",
+      }));
+    setGallery(items);
+  }
+
+  // --- The one main button per moment (Space or → also presses it) ---------
+
   let primary: Action = null;
-  if (phase === "collecting") {
-    primary = { label: "Reveal photos", run: startReveal, disabled: photos.length === 0 };
-  } else if (phase === "revealing") {
-    if (!current) primary = { label: "Show first photo", run: nextPhoto, disabled: remaining === 0 };
-    else if (!gs?.show_answer) primary = { label: "Who was it?", run: showAnswer };
-    else if (remaining > 0) primary = { label: "Next photo", run: nextPhoto };
-    else primary = { label: "End round", run: endRound };
+  if (phase === "lobby") {
+    primary = { label: "Start round", run: startRound, disabled: !preview };
+  } else if (phase === "uploading") {
+    primary =
+      timeUp && photos.length === 0
+        ? { label: "Back to lobby", run: backToLobby }
+        : { label: "End timer now", run: endUploads };
+  } else if (phase === "voting") {
+    primary = { label: "Close voting", run: closeVoting, disabled: !current };
+  } else if (phase === "reveal") {
+    primary = isLast
+      ? { label: "Next round", run: backToLobby }
+      : { label: "Next photo", run: nextPhoto, disabled: !current };
   }
 
   useEffect(() => {
@@ -192,145 +235,334 @@ export default function HostPage() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const btnPrimary =
-    "rounded-full bg-[#FFD23F] px-10 py-5 text-2xl font-bold text-[#1A0A26] transition active:scale-[0.98] disabled:opacity-40 focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-[#FF5C8A]";
+  // --- Pieces ----------------------------------------------------------------
+
+  const focus =
+    "focus-visible:outline focus-visible:outline-4 focus-visible:outline-offset-4 focus-visible:outline-rose";
+  const btnPrimary = `rounded-full bg-ink px-10 py-5 text-2xl font-bold text-petal transition active:scale-[0.98] disabled:opacity-30 ${focus}`;
+  const btnSecondary = `rounded-full border-[3px] border-ink px-7 py-3.5 text-xl font-bold transition active:scale-[0.98] disabled:opacity-30 ${focus}`;
+  const label = "text-xl font-bold uppercase tracking-widest text-rose";
+
+  const primaryButton = primary && (
+    <button onClick={primary.run} disabled={busy || primary.disabled} className={btnPrimary}>
+      {primary.label}
+    </button>
+  );
 
   const qr = (
-    <figure className="w-[min(26vw,340px)] rotate-2 bg-[#FBF8F2] p-4 pb-2 shadow-2xl">
+    <figure className="w-[min(22vw,300px)] shrink-0 rotate-2 bg-petal p-4 pb-2 shadow-2xl shadow-ink/20">
       {joinUrl && (
-        <QRCodeSVG
-          value={joinUrl}
-          size={512}
-          bgColor="#FBF8F2"
-          fgColor="#1A0A26"
-          className="h-auto w-full"
-        />
+        <QRCodeSVG value={joinUrl} size={512} bgColor="#fff4f8" fgColor="#2a0e1f" className="h-auto w-full" />
       )}
-      <figcaption className={`${hand.className} py-2 text-center text-4xl text-[#1A0A26]`}>
-        Scan to join
+      <figcaption className="py-2 text-center">
+        <span className={`${hand.className} block text-4xl`}>Scan to join</span>
+        <span className="block break-all text-lg font-bold">{joinUrl.replace(/^https?:\/\//, "")}</span>
       </figcaption>
     </figure>
   );
 
-  return (
-    <main
-      className={`${display.className} flex min-h-dvh flex-col bg-[#2E1046] px-[5vw] py-8 text-[#FBF8F2]`}
-    >
-      <header className="flex items-baseline justify-between">
-        <p className="text-3xl font-extrabold tracking-tight">PicMe</p>
-        <div className="flex items-baseline gap-6 text-lg text-[#FBF8F2]/70">
-          <span>
-            {players.length} {players.length === 1 ? "player" : "players"}
+  const roundCategory = categoryName(round?.category);
+
+  let body: ReactNode = null;
+
+  if (phase === "lobby") {
+    const previewCategory = categoryName(preview?.category);
+    body = (
+      <section className="flex flex-1 items-start justify-between gap-[4vw] pt-6">
+        <div className="flex max-w-5xl flex-1 flex-col gap-7">
+          <h1 className="text-[clamp(2.5rem,4.5vw,4.5rem)] font-extrabold leading-[1.05]">
+            {usedPrompts.length > 0 ? "Next round. Pick a category." : "Pick a category."}
+          </h1>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => draw(SHUFFLE)}
+              aria-pressed={drawnFrom === SHUFFLE}
+              className={`rounded-full px-7 py-3.5 text-xl font-bold transition active:scale-[0.98] ${focus} ${
+                drawnFrom === SHUFFLE ? "bg-ink text-petal" : "bg-rose text-petal"
+              }`}
+            >
+              Shuffle
+            </button>
+            {CATEGORIES.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => draw(c.id)}
+                aria-pressed={drawnFrom === c.id}
+                className={`${btnSecondary} ${drawnFrom === c.id ? "bg-ink text-petal" : ""}`}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+
+          <form
+            className="flex max-w-3xl gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              applyCustom();
+            }}
+          >
+            <input
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+              placeholder="…or write my own prompt"
+              maxLength={120}
+              aria-label="Write my own prompt"
+              className="min-w-0 flex-1 rounded-2xl border-[3px] border-ink bg-petal px-5 py-3 text-xl outline-none placeholder:text-ink/50 focus:ring-4 focus:ring-rose"
+            />
+            <button type="submit" disabled={!custom.trim()} className={btnSecondary}>
+              Use
+            </button>
+          </form>
+
+          <div className="min-h-44 rounded-3xl bg-petal p-7 shadow-xl shadow-ink/10">
+            {preview ? (
+              <>
+                <p className={label}>{previewCategory ?? "Your own prompt"}</p>
+                <p className="mt-2 text-[clamp(2rem,3.6vw,3.5rem)] font-extrabold leading-tight">
+                  {preview.prompt}
+                </p>
+                {drawnFrom && (
+                  <button onClick={() => draw(drawnFrom)} className={`${btnSecondary} mt-5`}>
+                    Another prompt
+                  </button>
+                )}
+              </>
+            ) : (
+              <p className="text-2xl font-semibold text-ink/60">
+                The prompt shows up here before the round starts.
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-6">
+            {primaryButton}
+            <div role="radiogroup" aria-label="Upload time" className="flex items-center gap-2">
+              <span className="mr-2 text-xl font-bold">Timer</span>
+              {TIMER_OPTIONS.map((s) => (
+                <button
+                  key={s}
+                  role="radio"
+                  aria-checked={seconds === s}
+                  onClick={() => setSeconds(s)}
+                  className={`rounded-full border-[3px] border-ink px-5 py-2 text-xl font-bold ${focus} ${
+                    seconds === s ? "bg-ink text-petal" : ""
+                  }`}
+                >
+                  {s}s
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <aside className="flex w-[min(24vw,320px)] shrink-0 flex-col items-center gap-6">
+          {qr}
+          <div className="w-full">
+            <p className="text-2xl font-extrabold">
+              {players.length} {players.length === 1 ? "player" : "players"}
+            </p>
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {players.map((p) => (
+                <li
+                  key={p.id}
+                  className="flex items-center gap-1 rounded-full bg-petal py-1 pl-4 pr-1 text-lg font-semibold"
+                >
+                  {p.name}
+                  <button
+                    onClick={() => removePlayer(p.id)}
+                    disabled={busy}
+                    aria-label={`Remove ${p.name}`}
+                    className={`grid h-7 w-7 place-items-center rounded-full text-base text-ink/60 hover:bg-ink hover:text-petal ${focus}`}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </aside>
+      </section>
+    );
+  } else if (phase === "uploading" && round) {
+    const noPhotos = timeUp && photos.length === 0;
+    body = (
+      <section className="flex flex-1 items-center justify-between gap-[5vw]">
+        <div className="flex max-w-4xl flex-1 flex-col gap-8">
+          {roundCategory && <p className={label}>{roundCategory}</p>}
+          <h1 className="text-[clamp(3rem,6.5vw,7rem)] font-extrabold leading-[1.02]">{round.prompt}</h1>
+
+          {noPhotos ? (
+            <p className="text-4xl font-bold">No photos this round.</p>
+          ) : (
+            <div className="flex items-baseline gap-8">
+              <span
+                className={`text-[clamp(5rem,11vw,10rem)] font-extrabold leading-none tabular-nums ${
+                  left !== null && left <= 5 ? "text-rose" : ""
+                }`}
+              >
+                {timeUp ? "Time!" : left}
+              </span>
+              <span className="text-3xl font-semibold text-ink/75">
+                {photos.length} of {players.length} photos in
+              </span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-4">
+            {primaryButton}
+            {!timeUp && (
+              <button onClick={addTime} disabled={busy} className={btnSecondary}>
+                +10 seconds
+              </button>
+            )}
+          </div>
+        </div>
+        {qr}
+      </section>
+    );
+  } else if ((phase === "voting" || phase === "reveal") && round) {
+    const reveal = phase === "reveal";
+    body = (
+      <section className="flex flex-1 flex-col items-center justify-center gap-6 pt-2">
+        <h1 className="max-w-5xl text-center text-[clamp(2rem,4vw,3.75rem)] font-extrabold leading-tight">
+          {round.prompt}
+        </h1>
+
+        {current && (
+          <figure className="-rotate-1 bg-petal p-5 pb-3 shadow-2xl shadow-ink/20">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={photoUrl(current.path)}
+              alt={reveal ? `Photo by ${names[current.player_id] ?? "someone"}` : "Mystery photo"}
+              className="max-h-[56vh] max-w-[80vw] object-contain"
+            />
+            <figcaption className="pt-3 text-center">
+              <span
+                className={`${hand.className} block text-6xl leading-none ${reveal ? "" : "text-ink/40"}`}
+              >
+                {reveal ? names[current.player_id] ?? "Someone" : "Who took this?"}
+              </span>
+              {reveal && <span className="mt-1 block text-2xl font-bold">Tell us the story</span>}
+            </figcaption>
+          </figure>
+        )}
+
+        <div className="flex flex-wrap items-center justify-center gap-6">
+          {primaryButton}
+          {reveal && isLast && (
+            <button onClick={endGame} disabled={busy} className={btnSecondary}>
+              End game
+            </button>
+          )}
+          <span className="text-2xl font-semibold text-ink/70">
+            Photo {current?.position ?? "–"} of {photos.length}
+            {!reveal && ` · ${gs?.vote_count ?? 0} of ${eligibleVoters} voted`}
           </span>
-          <button onClick={newGame} className="underline-offset-4 hover:underline">
+        </div>
+      </section>
+    );
+  } else if (phase === "scoreboard" && gallery) {
+    body = (
+      <section className="flex flex-1 flex-col gap-8 pt-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h1 className="text-[clamp(2.5rem,5vw,5rem)] font-extrabold leading-none">All the photos</h1>
+          <button onClick={() => setGallery(null)} className={btnSecondary}>
+            Back to scores
+          </button>
+        </div>
+        {gallery.length === 0 ? (
+          <p className="text-3xl font-semibold">No photos this game.</p>
+        ) : (
+          <ul className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-8">
+            {gallery.map((g, i) => (
+              <li key={g.id}>
+                <figure className={`bg-petal p-3 pb-2 shadow-xl shadow-ink/15 ${i % 2 ? "rotate-1" : "-rotate-1"}`}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photoUrl(g.path)} alt={`${g.prompt}, by ${g.name}`} className="aspect-square w-full object-cover" />
+                  <figcaption className="pt-2">
+                    <span className={`${hand.className} block text-4xl leading-none`}>{g.name}</span>
+                    <span className="block text-base font-semibold text-ink/70">{g.prompt}</span>
+                  </figcaption>
+                </figure>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    );
+  } else if (phase === "scoreboard") {
+    body = (
+      <section className="flex flex-1 flex-col items-center justify-center gap-8">
+        <Confetti />
+        <h1 className="text-[clamp(3rem,6vw,6rem)] font-extrabold leading-none">Final scores</h1>
+        <ol className="flex w-full max-w-3xl flex-col gap-3">
+          {scores.map((s, i) => {
+            const rank = rankOf(scores, i);
+            const winner = rank === 1 && s.points > 0;
+            return (
+              <li
+                key={s.player_id}
+                className={`flex items-baseline gap-6 rounded-3xl px-8 ${
+                  winner ? "bg-ink py-6 text-petal" : "bg-petal py-4"
+                }`}
+              >
+                <span className="w-12 text-3xl font-bold tabular-nums opacity-70">
+                  {i === 0 || scores[i - 1].points !== s.points ? rank : ""}
+                </span>
+                <span className={`flex-1 truncate font-bold ${winner ? "text-5xl" : "text-4xl"}`}>
+                  {winner && "👑 "}
+                  {s.name}
+                </span>
+                <span className="text-4xl font-extrabold tabular-nums">
+                  {s.points}{" "}
+                  <span className="text-2xl font-semibold opacity-70">{s.points === 1 ? "pt" : "pts"}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+        <div className="flex flex-wrap justify-center gap-4">
+          <button onClick={openGallery} className={btnPrimary}>
+            See all photos
+          </button>
+          <button onClick={playAgain} disabled={busy} className={btnSecondary}>
+            Play again
+          </button>
+          <button onClick={newGame} disabled={busy} className={btnSecondary}>
             New game
           </button>
         </div>
-      </header>
+      </section>
+    );
+  }
 
-      {phase === "setup" && (
-        <section className="flex flex-1 items-center justify-between gap-[5vw]">
-          <div className="flex max-w-3xl flex-1 flex-col gap-6">
-            <h1 className="text-[clamp(2.5rem,5vw,5rem)] font-extrabold leading-[1.05]">
-              What should everyone show?
-            </h1>
-            <form
-              className="flex flex-col gap-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                startRound(prompt);
-              }}
-            >
-              <input
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Type a prompt"
-                className="rounded-2xl bg-[#FBF8F2] px-6 py-5 text-2xl text-[#1A0A26] outline-none focus:ring-4 focus:ring-[#FF5C8A]"
-              />
-              <div className="flex flex-wrap gap-4">
-                <button type="submit" disabled={busy || !prompt.trim()} className={btnPrimary}>
-                  Start round
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrompt(PROMPTS[Math.floor(Math.random() * PROMPTS.length)])}
-                  className="rounded-full border-2 border-[#FBF8F2]/40 px-8 py-5 text-xl font-semibold"
-                >
-                  Surprise me
-                </button>
-              </div>
-            </form>
-            {players.length > 0 && (
-              <ul className="flex flex-wrap gap-2 pt-4">
-                {players.map((p) => (
-                  <li key={p.id} className="rounded-full bg-[#4A1D6B] px-4 py-1.5 text-lg">
-                    {p.name}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          {qr}
-        </section>
-      )}
-
-      {phase === "collecting" && round && (
-        <section className="flex flex-1 items-center justify-between gap-[5vw]">
-          <div className="flex max-w-4xl flex-1 flex-col gap-10">
-            <h1 className="text-[clamp(3rem,6vw,6.5rem)] font-extrabold leading-[1.02]">
-              {round.prompt}
-            </h1>
-            <p className="text-3xl text-[#FBF8F2]/80">
-              {photos.length} of {players.length} photos in
-            </p>
-            {primary && (
-              <div>
-                <button onClick={primary.run} disabled={busy || primary.disabled} className={btnPrimary}>
-                  {primary.label}
-                </button>
-              </div>
-            )}
-          </div>
-          {qr}
-        </section>
-      )}
-
-      {phase === "revealing" && round && (
-        <section className="flex flex-1 flex-col items-center justify-center gap-6 pt-4">
-          <p className="max-w-4xl text-center text-2xl text-[#FBF8F2]/70">{round.prompt}</p>
-
-          {current ? (
-            <figure className="-rotate-1 bg-[#FBF8F2] p-5 pb-3 shadow-2xl">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={photoUrl(current.path)}
-                alt="Mystery photo"
-                className="max-h-[60vh] max-w-[80vw] object-contain"
-              />
-              <figcaption
-                className={`${hand.className} pt-3 text-center text-6xl leading-none ${
-                  gs?.show_answer ? "text-[#1A0A26]" : "text-[#1A0A26]/30"
-                }`}
-              >
-                {gs?.show_answer ? names[current.player_id] ?? "Someone" : "Who took this?"}
-              </figcaption>
-            </figure>
-          ) : (
-            <p className="text-3xl">No photos yet.</p>
-          )}
-
-          <div className="flex items-center gap-8">
-            {primary && (
-              <button onClick={primary.run} disabled={busy || primary.disabled} className={btnPrimary}>
-                {primary.label}
-              </button>
-            )}
-            <span className="text-xl text-[#FBF8F2]/60">
-              Photo {shown} of {photos.length}
+  return (
+    <main className={`${display.className} flex min-h-dvh flex-col bg-blush px-[5vw] py-8 text-ink`}>
+      <header className="flex items-baseline justify-between">
+        <p className="text-4xl font-extrabold tracking-tight">
+          Pic<span className="text-rose">Me</span>
+        </p>
+        <div className="flex items-baseline gap-6 text-lg font-semibold text-ink/70">
+          {phase !== "lobby" && phase !== "scoreboard" && (
+            <span>
+              {players.length} {players.length === 1 ? "player" : "players"}
             </span>
-          </div>
-        </section>
-      )}
+          )}
+          {phase === "lobby" && (
+            <button onClick={endGame} disabled={busy} className="underline-offset-4 hover:underline">
+              End game
+            </button>
+          )}
+          {phase !== "scoreboard" && (
+            <button onClick={newGame} className="underline-offset-4 hover:underline">
+              New game
+            </button>
+          )}
+        </div>
+      </header>
+      {body}
     </main>
   );
 }
