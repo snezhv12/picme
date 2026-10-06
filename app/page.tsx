@@ -17,7 +17,8 @@ import {
 } from "@/lib/supabase";
 import { CATEGORIES, SHUFFLE, categoryName, hintFor, pickPrompt, unplayed } from "@/lib/prompts";
 import { compressImage } from "@/lib/compress";
-import { secondsLeft, useNow } from "@/lib/useNow";
+import { formatClock, secondsLeft, useNow } from "@/lib/useNow";
+import { useDeadline } from "@/lib/useDeadline";
 import { Heart, Logo } from "@/app/_components/Heart";
 import { InstallHint } from "@/app/_components/InstallHint";
 import { ReactionBubbles, ReactionPicker } from "@/app/_components/Reactions";
@@ -201,6 +202,9 @@ export default function PlayPage() {
   const phase = gs?.phase ?? "lobby";
   const now = useNow(phase === "uploading");
   const left = secondsLeft(round?.ends_at, now);
+  // Picking, voting and the reveal move on by themselves at the deadline
+  const stepLeft = useDeadline(gs?.deadline, load);
+  const clock = stepLeft !== null ? formatClock(stepLeft) : null;
 
   const myPhoto = player ? photos.find((p) => p.player_id === player.id) ?? null : null;
   const current = photos.find((p) => p.id === gs?.current_photo_id) ?? null;
@@ -410,6 +414,17 @@ export default function PlayPage() {
     setError(null);
     const { error } = await supabase.rpc("start_previewed_round", { p_player: player.id });
     if (error) turnError(error.message);
+    await load();
+    setBusy(false);
+  }
+
+  // Uploader: finished telling the story, move on now
+  async function doneWithStory(photoId: string) {
+    if (!player || busy) return;
+    setBusy(true);
+    setError(null);
+    const { error } = await supabase.rpc("uploader_done", { p_photo: photoId, p_player: player.id });
+    if (error) setError("That didn't work. Try again.");
     await load();
     setBusy(false);
   }
@@ -662,6 +677,11 @@ export default function PlayPage() {
     content = (
       <div className="flex flex-col gap-5">
         <h1 className="text-2xl font-bold leading-tight">{round.prompt}</h1>
+        {clock && (
+          <p className="-mt-3 text-base font-semibold tabular-nums text-ink/70" aria-live="off">
+            {phase === "voting" ? `${clock} left to vote` : `Next photo in ${clock}`}
+          </p>
+        )}
 
         {phase === "reveal" ? (
           <>
@@ -686,6 +706,11 @@ export default function PlayPage() {
             <ReactionPicker mine={myReactions[current.id] ?? null} onPick={(e) => react(current.id, e)} />
             {mine && (
               <StoryEditor key={current.id} photoId={current.id} playerId={player.id} story={current.story} onSaved={load} />
+            )}
+            {mine && (
+              <button onClick={() => doneWithStory(current.id)} disabled={busy} className={btnPrimary}>
+                Done, next photo
+              </button>
             )}
           </>
         ) : (
@@ -778,6 +803,11 @@ export default function PlayPage() {
         <div>
           <h1 className="text-4xl font-bold">Your turn to pick!</h1>
           <p className={muted}>Choose a category. Everyone gets the same prompt.</p>
+          {clock && (
+            <p className="mt-2 text-base font-semibold tabular-nums">
+              {clock} left, then {preview ? "your prompt" : "a Shuffle prompt"} starts automatically.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -827,7 +857,9 @@ export default function PlayPage() {
     content = (
       <div>
         <h1 className="text-4xl font-bold">{names[gs.picker_id]} is picking the category…</h1>
-        <p className={muted}>The prompt shows up here when the round starts.</p>
+        <p className={muted}>
+          The prompt shows up here when the round starts{clock ? ` (at the latest in ${clock})` : ""}.
+        </p>
       </div>
     );
   } else {

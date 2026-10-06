@@ -28,7 +28,8 @@ import {
   type Score,
 } from "@/lib/supabase";
 import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, unplayed } from "@/lib/prompts";
-import { secondsLeft, useNow } from "@/lib/useNow";
+import { formatClock, secondsLeft, useNow } from "@/lib/useNow";
+import { useDeadline } from "@/lib/useDeadline";
 import { Heart, Logo } from "@/app/_components/Heart";
 import { ReactionBubbles } from "@/app/_components/Reactions";
 import { hostAction, lock, type HostRpc } from "./actions";
@@ -240,6 +241,9 @@ export default function HostGame() {
   const now = useNow(phase === "uploading");
   const left = secondsLeft(round?.ends_at, now);
   const timeUp = left === 0;
+  // Picking, voting and the reveal move on by themselves at the deadline
+  const stepLeft = useDeadline(gs?.deadline, load);
+  const clock = stepLeft !== null ? formatClock(stepLeft) : null;
   const noTimer = !!round && round.ends_at === null;
 
   // --- Lobby ---------------------------------------------------------------
@@ -433,6 +437,11 @@ export default function HostGame() {
                 <p className="mt-2 text-2xl text-ink/65">
                   {pickerName ? "You can still pick for them below." : "The first to join picks first."}
                 </p>
+                {pickerName && clock && (
+                  <p className="mt-1 text-2xl font-semibold tabular-nums">
+                    {clock} left, then {preview ? "their prompt" : "a Shuffle prompt"} starts automatically
+                  </p>
+                )}
               </div>
               {pickerName && players.length > 1 && (
                 <button onClick={skipPicker} disabled={busy} className={btnSecondary}>
@@ -728,6 +737,7 @@ export default function HostGame() {
           <span className="text-2xl font-semibold text-ink/70">
             Photo {current?.position ?? "–"} of {photos.length}
             {!reveal && ` · ${gs?.vote_count ?? 0} of ${eligibleVoters} voted`}
+            {clock && (reveal ? ` · next in ${clock}` : ` · ${clock} left`)}
           </span>
         </div>
 

@@ -68,6 +68,8 @@ export type GameState = {
   timer_seconds: number | null;
   // Let everyone in without the host approving each player
   auto_approve: boolean;
+  // When the current step moves on by itself (picking, voting, reveal)
+  deadline: string | null;
 };
 
 export type Score = { player_id: string; name: string; points: number };
@@ -75,7 +77,7 @@ export type Score = { player_id: string; name: string; points: number };
 export const ROUND_COLS = "id,prompt,category,status,ends_at";
 export const PHOTO_COLS = "id,round_id,player_id,path,revealed,position,reactions,story";
 export const GAME_STATE_COLS =
-  "phase,current_round_id,current_photo_id,vote_count,pick_mode,picker_id,preview_prompt,preview_category,preview_from,timer_seconds,auto_approve";
+  "phase,current_round_id,current_photo_id,vote_count,pick_mode,picker_id,preview_prompt,preview_category,preview_from,timer_seconds,auto_approve,deadline";
 
 export function photoUrl(path: string) {
   return supabase.storage.from("photos").getPublicUrl(path).data.publicUrl;
