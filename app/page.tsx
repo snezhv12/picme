@@ -20,6 +20,8 @@ import { compressImage } from "@/lib/compress";
 import { secondsLeft, useNow } from "@/lib/useNow";
 import { Heart, Logo } from "@/app/_components/Heart";
 import { InstallHint } from "@/app/_components/InstallHint";
+import { ReactionBubbles, ReactionPicker } from "@/app/_components/Reactions";
+import { StoryEditor } from "@/app/_components/StoryEditor";
 
 const PLAYER_KEY = "picme-player";
 const VOTES_KEY = "picme-votes"; // photo id -> guessed player id, only on this phone
@@ -105,6 +107,8 @@ export default function PlayPage() {
   const [claim, setClaim] = useState<(SavedClaim & { status: string }) | null>(null);
   // Who has voted on the photo on screen (never what they voted)
   const [voted, setVoted] = useState<Set<string>>(new Set());
+  // This player's own reaction per photo (to highlight it)
+  const [myReactions, setMyReactions] = useState<Record<string, string>>({});
   const [gs, setGs] = useState<GameState | null>(null);
   const [round, setRound] = useState<Round | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -219,6 +223,44 @@ export default function PlayPage() {
       alive = false;
     };
   }, [currentId, voteCount, phase]);
+
+  // My own reaction on the photo on screen
+  const playerId = player?.id ?? null;
+  useEffect(() => {
+    if (!currentId || !playerId) return;
+    let alive = true;
+    supabase.rpc("my_reactions", { p_player: playerId, p_photos: [currentId] }).then(({ data }) => {
+      if (!alive) return;
+      const mine = (data as { photo_id: string; emoji: string }[] | null)?.[0]?.emoji;
+      setMyReactions((r) => {
+        const next = { ...r };
+        if (mine) next[currentId] = mine;
+        else delete next[currentId];
+        return next;
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [currentId, playerId]);
+
+  async function react(photoId: string, emoji: string) {
+    if (!player) return;
+    const before = myReactions;
+    const next = { ...myReactions };
+    if (next[photoId] === emoji) delete next[photoId];
+    else next[photoId] = emoji;
+    setMyReactions(next);
+    const { error } = await supabase.rpc("set_reaction", {
+      p_photo: photoId,
+      p_player: player.id,
+      p_emoji: emoji,
+    });
+    if (error) {
+      setMyReactions(before);
+      setError("Reaction didn't go through. Try again.");
+    }
+  }
 
   async function join(skipCheck = false) {
     const trimmed = name.trim();
@@ -631,9 +673,20 @@ export default function PlayPage() {
               </span>,
               `Photo by ${owner}`
             )}
-            <p className="text-center text-xl text-ink/75">
-              {mine ? "Your turn! Tell us the story." : "Tell us the story"}
-            </p>
+            {current.story ? (
+              <blockquote className="glass whitespace-pre-line rounded-2xl px-5 py-4 text-lg leading-snug">
+                {current.story}
+              </blockquote>
+            ) : (
+              <p className="text-center text-xl text-ink/75">
+                {mine ? "Your turn! Tell us the story." : "Tell us the story"}
+              </p>
+            )}
+            <ReactionBubbles photoId={current.id} counts={current.reactions} canShowNames />
+            <ReactionPicker mine={myReactions[current.id] ?? null} onPick={(e) => react(current.id, e)} />
+            {mine && (
+              <StoryEditor key={current.id} photoId={current.id} playerId={player.id} story={current.story} onSaved={load} />
+            )}
           </>
         ) : (
           <>
@@ -651,6 +704,8 @@ export default function PlayPage() {
             ) : (
               bigPhoto(current.path, <span className="text-ink/45">Who took this?</span>, "Mystery photo")
             )}
+            <ReactionBubbles photoId={current.id} counts={current.reactions} canShowNames={false} />
+            <ReactionPicker mine={myReactions[current.id] ?? null} onPick={(e) => react(current.id, e)} />
             <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label={mine ? "Blend in" : "Who took this?"}>
               {others.map((c) => {
                 const picked = guess === c.id;

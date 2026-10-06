@@ -30,6 +30,7 @@ import {
 import { CATEGORIES, SHUFFLE, categoryName, pickPrompt, unplayed } from "@/lib/prompts";
 import { secondsLeft, useNow } from "@/lib/useNow";
 import { Heart, Logo } from "@/app/_components/Heart";
+import { ReactionBubbles } from "@/app/_components/Reactions";
 import { hostAction, lock, type HostRpc } from "./actions";
 import { askNotifyPermission, chime, notifyJoin, notifyPermission, unlockAudio } from "@/lib/joinAlerts";
 
@@ -37,7 +38,14 @@ import { askNotifyPermission, chime, notifyJoin, notifyPermission, unlockAudio }
 const TIMER_OPTIONS: (number | null)[] = [20, 40, 60, null];
 
 type Action = { label: string; run: () => void; disabled?: boolean } | null;
-type GalleryItem = { id: string; path: string; prompt: string; name: string };
+type GalleryItem = {
+  id: string;
+  path: string;
+  prompt: string;
+  name: string;
+  story: string | null;
+  reactions: Record<string, number>;
+};
 
 const noSubscribe = () => () => {};
 
@@ -314,7 +322,7 @@ export default function HostGame() {
 
   async function openGallery() {
     const [{ data: ph }, { data: rs }] = await Promise.all([
-      supabase.from("photos").select("id,path,round_id,player_id,position,created_at"),
+      supabase.from("photos").select("id,path,round_id,player_id,position,created_at,story,reactions"),
       supabase.from("rounds").select("id,prompt,created_at"),
     ]);
     const roundOrder = new Map((rs ?? []).map((r) => [r.id, r]));
@@ -331,6 +339,8 @@ export default function HostGame() {
         path: p.path,
         prompt: roundOrder.get(p.round_id)!.prompt,
         name: names[p.player_id] ?? "Someone",
+        story: p.story as string | null,
+        reactions: (p.reactions ?? {}) as Record<string, number>,
       }));
     setGallery(items);
   }
@@ -689,13 +699,23 @@ export default function HostGame() {
                     {names[current.player_id] ?? "Someone"}
                     <Heart key={current.id} className="heart-pulse h-10 w-10 text-rose" strokeWidth={1.75} />
                   </span>
-                  <span className="mt-2 block text-2xl text-ink/70">Tell us the story</span>
+                  {current.story ? (
+                    <span className="mx-auto mt-3 block max-w-3xl whitespace-pre-line text-2xl leading-snug">
+                      {current.story}
+                    </span>
+                  ) : (
+                    <span className="mt-2 block text-2xl text-ink/70">Tell us the story</span>
+                  )}
                 </>
               ) : (
                 <span className="block text-4xl font-semibold leading-none text-ink/45">Who took this?</span>
               )}
             </figcaption>
           </figure>
+        )}
+
+        {current && (
+          <ReactionBubbles photoId={current.id} counts={current.reactions} canShowNames={reveal} size="lg" />
         )}
 
         <div className="flex flex-wrap items-center justify-center gap-6">
@@ -753,6 +773,12 @@ export default function HostGame() {
                   <figcaption className="px-2 pb-1 pt-3">
                     <span className="block text-2xl font-semibold leading-tight">{g.name}</span>
                     <span className="block text-base text-ink/65">{g.prompt}</span>
+                    {g.story && (
+                      <span className="mt-2 block whitespace-pre-line text-base leading-snug">{g.story}</span>
+                    )}
+                    <div className="mt-2">
+                      <ReactionBubbles photoId={g.id} counts={g.reactions} canShowNames />
+                    </div>
                   </figcaption>
                 </figure>
               </li>

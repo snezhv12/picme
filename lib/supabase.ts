@@ -43,6 +43,10 @@ export type Photo = {
   revealed: boolean;
   // Slideshow order (1, 2, 3, ...), set when uploads close
   position: number | null;
+  // Live reaction counts, e.g. { "😂": 3 } (who reacted stays hidden until the reveal)
+  reactions: Record<string, number>;
+  // Optional written story by the uploader, after the reveal
+  story: string | null;
 };
 
 // One shared phase drives the projector and every phone
@@ -69,7 +73,7 @@ export type GameState = {
 export type Score = { player_id: string; name: string; points: number };
 
 export const ROUND_COLS = "id,prompt,category,status,ends_at";
-export const PHOTO_COLS = "id,round_id,player_id,path,revealed,position";
+export const PHOTO_COLS = "id,round_id,player_id,path,revealed,position,reactions,story";
 export const GAME_STATE_COLS =
   "phase,current_round_id,current_photo_id,vote_count,pick_mode,picker_id,preview_prompt,preview_category,preview_from,timer_seconds,auto_approve";
 
