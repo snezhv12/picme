@@ -45,8 +45,10 @@ export type Photo = {
   position: number | null;
   // Live reaction counts, e.g. { "😂": 3 } (who reacted stays hidden until the reveal)
   reactions: Record<string, number>;
-  // Optional written story by the uploader, after the reveal
+  // The uploader's story; stays null for everyone until the photo is revealed
   story: string | null;
+  // Has the uploader been revealed yet?
+  answer_revealed: boolean;
 };
 
 // One shared phase drives the projector and every phone
@@ -75,7 +77,8 @@ export type GameState = {
 export type Score = { player_id: string; name: string; points: number };
 
 export const ROUND_COLS = "id,prompt,category,status,ends_at";
-export const PHOTO_COLS = "id,round_id,player_id,path,revealed,position,reactions,story";
+export const PHOTO_COLS =
+  "id,round_id,player_id,path,revealed,position,reactions,story,answer_revealed";
 export const GAME_STATE_COLS =
   "phase,current_round_id,current_photo_id,vote_count,pick_mode,picker_id,preview_prompt,preview_category,preview_from,timer_seconds,auto_approve,deadline";
 

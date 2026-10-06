@@ -633,6 +633,7 @@ export default function PlayPage() {
         )}
 
         {myPhoto && thumb(myPhoto.path, open ? "Sent" : "In")}
+        {myPhoto && <StoryEditor key={myPhoto.id} photoId={myPhoto.id} playerId={player.id} revealed={false} />}
 
         {open && myPhoto && !busy && (
           <p className="text-center text-lg font-bold" aria-live="polite">
@@ -705,7 +706,13 @@ export default function PlayPage() {
             <ReactionBubbles photoId={current.id} counts={current.reactions} canShowNames />
             <ReactionPicker mine={myReactions[current.id] ?? null} onPick={(e) => react(current.id, e)} />
             {mine && (
-              <StoryEditor key={current.id} photoId={current.id} playerId={player.id} story={current.story} onSaved={load} />
+              <StoryEditor
+                key={current.id}
+                photoId={current.id}
+                playerId={player.id}
+                revealed
+                published={current.story}
+              />
             )}
             {mine && (
               <button onClick={() => doneWithStory(current.id)} disabled={busy} className={btnPrimary}>
@@ -781,6 +788,16 @@ export default function PlayPage() {
               </div>
             )}
           </>
+        )}
+        {myPhoto && !myPhoto.answer_revealed && (
+          <section className="glass mt-2 rounded-3xl p-4">
+            <p className={label}>
+              {current.id === myPhoto.id ? "Your photo is on screen" : "Your photo is still coming up"}
+            </p>
+            <div className="mt-2">
+              <StoryEditor key={myPhoto.id} photoId={myPhoto.id} playerId={player.id} revealed={false} />
+            </div>
+          </section>
         )}
       </div>
     );
