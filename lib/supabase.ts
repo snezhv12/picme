@@ -7,9 +7,24 @@ export const supabase = createClient(
 
 // Only approved players take part; the host lets pending players in
 export type PlayerStatus = "pending" | "approved" | "declined";
-export type Player = { id: string; name: string; status: PlayerStatus };
+export type Player = {
+  id: string;
+  name: string;
+  status: PlayerStatus;
+  // The phone this player is on; another phone holding the same player is signed out
+  device_id: string | null;
+};
 
-export const PLAYER_COLS = "id,name,status";
+export const PLAYER_COLS = "id,name,status,device_id";
+
+// "Continue as Alessandra": waits for the host like a new player does
+export type Claim = {
+  id: string;
+  player_id: string;
+  status: PlayerStatus;
+  created_at: string;
+};
+export const CLAIM_COLS = "id,player_id,status,created_at";
 
 export type Round = {
   id: string;

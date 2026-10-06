@@ -19,6 +19,8 @@ import {
   PHOTO_COLS,
   PLAYER_COLS,
   ROUND_COLS,
+  CLAIM_COLS,
+  type Claim,
   type GameState,
   type Photo,
   type Player,
@@ -39,6 +41,13 @@ type GalleryItem = { id: string; path: string; prompt: string; name: string };
 
 const noSubscribe = () => () => {};
 
+function friendlyError(message: string) {
+  if (/could not find the function|schema cache/i.test(message)) {
+    return "The database is missing an update. Run the latest SQL file from supabase/ in the Supabase SQL Editor.";
+  }
+  return `That didn't work: ${message || "unknown error"}`;
+}
+
 export default function HostGame() {
   const router = useRouter();
   const [gs, setGs] = useState<GameState | null>(null);
@@ -48,7 +57,13 @@ export default function HostGame() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [waiting, setWaiting] = useState<Player[]>([]);
   const [declined, setDeclined] = useState<Player[]>([]);
+  const [everyone, setEveryone] = useState<Player[]>([]);
+  // "Continue as …" requests from a new device
+  const [claims, setClaims] = useState<Claim[]>([]);
   const seenWaiting = useRef<Set<string> | null>(null);
+  // Who has voted on the photo on screen (never what they voted)
+  const [voted, setVoted] = useState<Set<string>>(new Set());
+  const [actionError, setActionError] = useState<string | null>(null);
   const [, setPermAsked] = useState(0);
   const permission = useSyncExternalStore(noSubscribe, notifyPermission, () => "unsupported" as const);
   const [usedPrompts, setUsedPrompts] = useState<string[]>([]);
@@ -67,10 +82,11 @@ export default function HostGame() {
   );
 
   const load = useCallback(async () => {
-    const [{ data: g }, { data: p }, { data: rs }] = await Promise.all([
+    const [{ data: g }, { data: p }, { data: rs }, { data: cl }] = await Promise.all([
       supabase.from("game_state").select(GAME_STATE_COLS).eq("id", 1).single(),
       supabase.from("players").select(PLAYER_COLS).order("created_at"),
       supabase.from("rounds").select("prompt"),
+      supabase.from("player_claims").select(CLAIM_COLS).eq("status", "pending").order("created_at"),
     ]);
     setGs(g ?? null);
     const all = p ?? [];
@@ -78,15 +94,11 @@ export default function HostGame() {
     setPlayers(all.filter((x) => x.status === "approved"));
     setWaiting(pending);
     setDeclined(all.filter((x) => x.status === "declined"));
+    setEveryone(all);
 
-    // Chime + notification for anyone new asking to join (not for people
-    // already waiting when the page opened)
-    if (seenWaiting.current) {
-      const fresh = pending.filter((x) => !seenWaiting.current!.has(x.id));
-      if (fresh.length) chime();
-      fresh.forEach((x) => notifyJoin(x.name, x.id));
-    }
-    seenWaiting.current = new Set(pending.map((x) => x.id));
+    const openClaims = cl ?? [];
+    setClaims(openClaims);
+
 
     setUsedPrompts((rs ?? []).map((r) => r.prompt));
 
@@ -118,6 +130,7 @@ export default function HostGame() {
       .on("postgres_changes", { event: "*", schema: "public", table: "rounds" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "photos" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "players" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "player_claims" }, load)
       .subscribe((status) => {
         if (status !== "CLOSED") load();
       });
@@ -125,6 +138,23 @@ export default function HostGame() {
       supabase.removeChannel(ch);
     };
   }, [load]);
+
+  // Chime + notification for anyone new asking to join or to continue as
+  // someone (not for requests already open when the page opened)
+  useEffect(() => {
+    if (!gs) return; // not loaded yet
+    const nameOf = (id: string) => everyone.find((x) => x.id === id)?.name ?? "Someone";
+    const requests = [
+      ...waiting.map((x) => ({ key: x.id, name: x.name })),
+      ...claims.map((c) => ({ key: c.id, name: nameOf(c.player_id) })),
+    ];
+    if (seenWaiting.current) {
+      const fresh = requests.filter((x) => !seenWaiting.current!.has(x.key));
+      if (fresh.length) chime();
+      fresh.forEach((x) => notifyJoin(x.name, x.key));
+    }
+    seenWaiting.current = new Set(requests.map((x) => x.key));
+  }, [gs, waiting, claims, everyone]);
 
   // Sound can only play after the page has been clicked once
   useEffect(() => {
@@ -155,12 +185,19 @@ export default function HostGame() {
     router.refresh();
   }
 
+  // Runs a host move; any failure is shown instead of silently ignored
   async function run(fn: () => PromiseLike<unknown>) {
     if (busy) return;
     setBusy(true);
+    setActionError(null);
     try {
-      await fn();
+      const res = await fn();
+      if (res && typeof res === "object" && "ok" in res && res.ok === false && !("locked" in res && res.locked)) {
+        setActionError(friendlyError(String((res as { error?: string }).error ?? "")));
+      }
       await load();
+    } catch (e) {
+      setActionError(friendlyError(e instanceof Error ? e.message : String(e)));
     } finally {
       setBusy(false);
     }
@@ -174,9 +211,23 @@ export default function HostGame() {
   );
   const isLast = !!current && current.position === photos.length;
   const allIn = players.length > 0 && photos.length >= players.length;
-  const eligibleVoters = current
-    ? players.filter((p) => p.id !== current.player_id).length
-    : 0;
+  // Everyone votes, the uploader too (a decoy that never scores), so the
+  // who-voted list can't give them away
+  const eligibleVoters = players.length;
+
+  // Who has voted so far: refreshed whenever the live vote counter moves
+  const currentId = current?.id ?? null;
+  const voteCount = gs?.vote_count ?? 0;
+  useEffect(() => {
+    if (!currentId || (phase !== "voting" && phase !== "reveal")) return;
+    let alive = true;
+    supabase.rpc("voters", { p_photo: currentId }).then(({ data }) => {
+      if (alive) setVoted(new Set((data as string[] | null) ?? []));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [currentId, voteCount, phase]);
 
   const now = useNow(phase === "uploading");
   const left = secondsLeft(round?.ends_at, now);
@@ -225,6 +276,9 @@ export default function HostGame() {
   const letIn = (id: string) => run(() => host("approve_player", { p_id: id }));
   const decline = (id: string) => run(() => host("decline_player", { p_id: id }));
   const setAutoApprove = (on: boolean) => run(() => host("set_auto_approve", { p_on: on }));
+
+  const approveClaim = (id: string) => run(() => host("host_approve_claim", { p_claim: id }));
+  const declineClaim = (id: string) => run(() => host("host_decline_claim", { p_claim: id }));
 
   const removePlayer = (id: string) =>
     run(() => host("host_remove_player", { p_id: id }));
@@ -538,7 +592,7 @@ export default function HostGame() {
                     onClick={() => removePlayer(p.id)}
                     disabled={busy}
                     aria-label={`Remove ${p.name}`}
-                    className={`grid h-7 w-7 place-items-center rounded-full text-sm text-ink/50 hover:bg-rose hover:text-white ${focus}`}
+                    className={`grid h-11 w-11 place-items-center rounded-full text-base text-ink/50 hover:bg-rose hover:text-white md:h-8 md:w-8 md:text-sm ${focus}`}
                   >
                     ✕
                   </button>
@@ -656,6 +710,26 @@ export default function HostGame() {
             {!reveal && ` · ${gs?.vote_count ?? 0} of ${eligibleVoters} voted`}
           </span>
         </div>
+
+        {!reveal && current && (
+          <ul aria-label="Who has voted" className="flex max-w-5xl flex-wrap justify-center gap-2">
+            {players.map((p) => {
+              const done = voted.has(p.id);
+              return (
+                <li
+                  key={p.id}
+                  className={`glass flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xl font-medium ${
+                    done ? "" : "opacity-45"
+                  }`}
+                >
+                  {done && <span aria-hidden>✓</span>}
+                  {p.name}
+                  <span className="sr-only">{done ? ", voted" : ", still voting"}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
     );
   } else if (phase === "scoreboard" && gallery) {
@@ -764,7 +838,23 @@ export default function HostGame() {
       </header>
       {body}
 
-      {waiting.length > 0 && (
+      {actionError && (
+        <div
+          role="alert"
+          className="glass fixed left-1/2 top-6 z-30 flex w-[min(92vw,640px)] -translate-x-1/2 items-start gap-3 rounded-2xl border-rose! px-5 py-4 text-lg font-semibold"
+        >
+          <p className="flex-1">{actionError}</p>
+          <button
+            onClick={() => setActionError(null)}
+            aria-label="Dismiss"
+            className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink/60 hover:bg-white/80 ${focus}`}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {(waiting.length > 0 || claims.length > 0) && (
         <aside
           aria-label="Wants to join"
           className="glass fixed bottom-6 right-6 z-20 w-[min(92vw,380px)] rounded-3xl p-5"
@@ -783,6 +873,28 @@ export default function HostGame() {
                 </button>
                 <button
                   onClick={() => decline(p.id)}
+                  disabled={busy}
+                  className={`glass rounded-full px-4 py-2 text-lg font-semibold disabled:opacity-40 ${focus}`}
+                >
+                  Decline
+                </button>
+              </li>
+            ))}
+            {claims.map((c) => (
+              <li key={c.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 text-xl font-semibold leading-tight">
+                  <span className="block truncate">{everyone.find((p) => p.id === c.player_id)?.name ?? "Someone"}</span>
+                  <span className="block text-sm font-medium text-ink/60">on a new device</span>
+                </span>
+                <button
+                  onClick={() => approveClaim(c.id)}
+                  disabled={busy}
+                  className={`rounded-full bg-rose px-4 py-2 text-lg font-semibold text-white disabled:opacity-40 ${focus}`}
+                >
+                  Let in
+                </button>
+                <button
+                  onClick={() => declineClaim(c.id)}
                   disabled={busy}
                   className={`glass rounded-full px-4 py-2 text-lg font-semibold disabled:opacity-40 ${focus}`}
                 >

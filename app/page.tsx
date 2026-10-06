@@ -24,6 +24,25 @@ import { InstallHint } from "@/app/_components/InstallHint";
 const PLAYER_KEY = "picme-player";
 const VOTES_KEY = "picme-votes"; // photo id -> guessed player id, only on this phone
 const DEVICE_KEY = "picme-device"; // lets the host's "decline" stick to this phone
+const CLAIM_KEY = "picme-claim"; // an open "Continue as …" request from this phone
+
+type SavedClaim = { id: string; playerId: string; name: string };
+
+function readDevice() {
+  try {
+    return localStorage.getItem(DEVICE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function readClaim(): SavedClaim | null {
+  try {
+    return JSON.parse(localStorage.getItem(CLAIM_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
 
 function deviceId() {
   try {
@@ -79,6 +98,13 @@ export default function PlayPage() {
   const stored = useMemo(() => parsePlayer(storedRaw), [storedRaw]);
   const [joined, setJoined] = useState<Player | null>(null);
   const [name, setName] = useState("");
+  // Signed out on this phone (another device took over, or "join as someone else")
+  const [forgot, setForgot] = useState(false);
+  // An existing player with a similar name: "Are you Alessandra?"
+  const [suggest, setSuggest] = useState<{ id: string; name: string } | null>(null);
+  const [claim, setClaim] = useState<(SavedClaim & { status: string }) | null>(null);
+  // Who has voted on the photo on screen (never what they voted)
+  const [voted, setVoted] = useState<Set<string>>(new Set());
   const [gs, setGs] = useState<GameState | null>(null);
   const [round, setRound] = useState<Round | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -99,6 +125,25 @@ export default function PlayPage() {
     ]);
     setGs(g ?? null);
     setEveryone(p ?? []);
+
+    // A "Continue as …" request: once the host approves it, this phone is that player
+    const saved = readClaim();
+    if (saved) {
+      const { data: c } = await supabase.from("player_claims").select("status").eq("id", saved.id).maybeSingle();
+      const status = c?.status ?? "declined";
+      if (status === "approved") {
+        const me = { id: saved.playerId, name: saved.name };
+        localStorage.setItem(PLAYER_KEY, JSON.stringify(me));
+        localStorage.removeItem(CLAIM_KEY);
+        localStorage.removeItem(VOTES_KEY);
+        setMyVotes({});
+        setJoined({ ...me, status: "approved", device_id: readDevice() });
+        setForgot(false);
+        setClaim(null);
+      } else {
+        setClaim({ ...saved, status });
+      }
+    }
     if (g?.phase === "lobby") {
       // Prompts already played this game, so the picker doesn't draw them again
       const { data: rs } = await supabase.from("rounds").select("prompt");
@@ -129,6 +174,7 @@ export default function PlayPage() {
       .on("postgres_changes", { event: "*", schema: "public", table: "rounds" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "photos" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "players" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "player_claims" }, load)
       .subscribe((status) => {
         if (status !== "CLOSED") load();
       });
@@ -139,10 +185,13 @@ export default function PlayPage() {
 
   // This phone's player, as the host sees them. Gone (removed, or a new game)
   // means back to the join screen; only approved players take part.
-  const saved = joined ?? stored;
+  const saved = forgot ? null : joined ?? stored;
   const checked = everyone !== null;
   const me = saved ? everyone?.find((p) => p.id === saved.id) ?? null : null;
-  const player = me?.status === "approved" ? me : null;
+  // The host moved this player to another phone: this one is signed out
+  const myDevice = useSyncExternalStore(noSubscribe, readDevice, () => null);
+  const signedOut = !!me?.device_id && !!myDevice && me.device_id !== myDevice;
+  const player = me?.status === "approved" && !signedOut ? me : null;
   const players = useMemo(() => everyone?.filter((p) => p.status === "approved") ?? null, [everyone]);
 
   const phase = gs?.phase ?? "lobby";
@@ -157,11 +206,35 @@ export default function PlayPage() {
   );
   const others = (players ?? []).filter((p) => p.id !== player?.id);
 
-  async function join() {
+  // Who has voted so far: refreshed whenever the live vote counter moves
+  const currentId = current?.id ?? null;
+  const voteCount = gs?.vote_count ?? 0;
+  useEffect(() => {
+    if (!currentId || phase !== "voting") return;
+    let alive = true;
+    supabase.rpc("voters", { p_photo: currentId }).then(({ data }) => {
+      if (alive) setVoted(new Set((data as string[] | null) ?? []));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [currentId, voteCount, phase]);
+
+  async function join(skipCheck = false) {
     const trimmed = name.trim();
     if (!trimmed) return;
     setBusy(true);
     setError(null);
+    if (!skipCheck) {
+      const { data: similar } = await supabase.rpc("find_similar_player", { p_name: trimmed });
+      const match = (similar as { id: string; name: string }[] | null)?.[0];
+      if (match) {
+        setSuggest(match);
+        setBusy(false);
+        return;
+      }
+    }
+    setSuggest(null);
     const { data, error } = await supabase
       .from("players")
       .insert({ name: trimmed, device_id: deviceId() })
@@ -184,7 +257,45 @@ export default function PlayPage() {
     localStorage.removeItem(VOTES_KEY);
     setMyVotes({});
     setJoined(data);
+    setForgot(false);
     load();
+  }
+
+  // "Continue as Alessandra": the host has to approve it
+  async function continueAs(target: { id: string; name: string }) {
+    setBusy(true);
+    setError(null);
+    const { data, error } = await supabase.rpc("request_claim", {
+      p_player: target.id,
+      p_device: deviceId(),
+    });
+    setBusy(false);
+    if (error || !data) {
+      setError(
+        error?.message.includes("declined") ? "The host didn't let you in." : "That didn't work. Try again."
+      );
+      return;
+    }
+    const c = { id: data as string, playerId: target.id, name: target.name };
+    try {
+      localStorage.setItem(CLAIM_KEY, JSON.stringify(c));
+    } catch {}
+    setSuggest(null);
+    setClaim({ ...c, status: "pending" });
+  }
+
+  function startOver() {
+    try {
+      localStorage.removeItem(PLAYER_KEY);
+      localStorage.removeItem(CLAIM_KEY);
+      localStorage.removeItem(VOTES_KEY);
+    } catch {}
+    setJoined(null);
+    setForgot(true);
+    setClaim(null);
+    setSuggest(null);
+    setMyVotes({});
+    setError(null);
   }
 
   async function upload(file: File) {
@@ -311,6 +422,58 @@ export default function PlayPage() {
 
   if (!checked) {
     content = null;
+  } else if (claim && claim.status === "pending") {
+    content = (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-4xl font-bold">Waiting for the host…</h1>
+          <p className={muted}>You asked to continue as {claim.name}. This screen changes as soon as the host says yes.</p>
+        </div>
+        <button onClick={startOver} className={btnSecondary}>
+          Join as someone else
+        </button>
+      </div>
+    );
+  } else if (claim && claim.status === "declined") {
+    content = (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-4xl font-bold">The host said no.</h1>
+          <p className={muted}>You can&apos;t continue as {claim.name}. Ask the host if that&apos;s a mistake.</p>
+        </div>
+        <button onClick={startOver} className={btnSecondary}>
+          Join as someone else
+        </button>
+      </div>
+    );
+  } else if (signedOut && me) {
+    content = (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-4xl font-bold">You&apos;re playing on another device now.</h1>
+          <p className={muted}>{me.name} continued on a different phone, so this one is signed out.</p>
+        </div>
+        <button onClick={startOver} className={btnSecondary}>
+          Join as someone else
+        </button>
+      </div>
+    );
+  } else if (suggest && !player) {
+    content = (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-4xl font-bold">Are you {suggest.name}?</h1>
+          <p className={muted}>Someone with this name is already in the game.</p>
+        </div>
+        <button onClick={() => continueAs(suggest)} disabled={busy} className={btnPrimary}>
+          Continue as {suggest.name}
+        </button>
+        <button onClick={() => join(true)} disabled={busy} className={btnSecondary}>
+          No, I&apos;m someone else
+        </button>
+        <p className="text-base text-ink/65">Continuing needs the host&apos;s OK, so nobody can take over a name.</p>
+      </div>
+    );
   } else if (me?.status === "pending") {
     content = (
       <div>
@@ -472,18 +635,23 @@ export default function PlayPage() {
               {mine ? "Your turn! Tell us the story." : "Tell us the story"}
             </p>
           </>
-        ) : mine ? (
-          <>
-            {bigPhoto(current.path, "Yours", "Your photo")}
-            <div>
-              <p className="text-3xl font-bold">This one&apos;s yours.</p>
-              <p className={muted}>Keep a straight face.</p>
-            </div>
-          </>
         ) : (
           <>
-            {bigPhoto(current.path, <span className="text-ink/45">Who took this?</span>, "Mystery photo")}
-            <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Who took this?">
+            {mine ? (
+              <>
+                {bigPhoto(current.path, "Yours", "Your photo")}
+                <div>
+                  <p className="text-3xl font-bold">This one&apos;s yours.</p>
+                  <p className={muted}>
+                    Blend in: tap any name, like everyone else, so the list doesn&apos;t give you away.
+                    It doesn&apos;t count.
+                  </p>
+                </div>
+              </>
+            ) : (
+              bigPhoto(current.path, <span className="text-ink/45">Who took this?</span>, "Mystery photo")
+            )}
+            <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label={mine ? "Blend in" : "Who took this?"}>
               {others.map((c) => {
                 const picked = guess === c.id;
                 return (
@@ -503,9 +671,35 @@ export default function PlayPage() {
             </div>
             <p className="text-base font-semibold" aria-live="polite">
               {guess
-                ? `Vote sent: ${names[guess] ?? "someone"}. You can change it until voting closes.`
+                ? mine
+                  ? "Done. You blend in."
+                  : `Vote sent: ${names[guess] ?? "someone"}. You can change it until voting closes.`
                 : "Your vote stays secret."}
             </p>
+            {guess && (
+              <div>
+                <p className={label}>
+                  {voted.size} of {players?.length ?? 0} voted
+                </p>
+                <ul aria-label="Who has voted" className="mt-2 flex flex-wrap gap-2">
+                  {(players ?? []).map((p) => {
+                    const done = voted.has(p.id);
+                    return (
+                      <li
+                        key={p.id}
+                        className={`glass flex items-center gap-1 rounded-full px-3 py-1 text-base font-medium ${
+                          done ? "" : "opacity-45"
+                        }`}
+                      >
+                        {done && <span aria-hidden>✓</span>}
+                        {p.name}
+                        <span className="sr-only">{done ? ", voted" : ", still voting"}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
           </>
         )}
       </div>

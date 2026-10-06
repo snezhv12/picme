@@ -61,6 +61,8 @@ const HOST_RPCS = {
   approve_player: ["p_id"],
   decline_player: ["p_id"],
   set_auto_approve: ["p_on"],
+  host_approve_claim: ["p_claim"],
+  host_decline_claim: ["p_claim"],
 } as const;
 
 export type HostRpc = keyof typeof HOST_RPCS;
