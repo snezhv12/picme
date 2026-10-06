@@ -221,8 +221,10 @@ export default function HostGame() {
   const isLast = !!current && current.position === photos.length;
   const allIn = players.length > 0 && photos.length >= players.length;
   // Everyone votes, the uploader too (a decoy that never scores), so the
-  // who-voted list can't give them away
-  const eligibleVoters = players.length;
+  // who-voted list can't give them away. With 1-2 players there's nobody to
+  // hide from, so the uploader isn't waited for (same rule as the database).
+  const votersNeeded = players.filter((p) => players.length >= 3 || p.id !== current?.player_id);
+  const eligibleVoters = votersNeeded.length;
 
   // Who has voted so far: refreshed whenever the live vote counter moves
   const currentId = current?.id ?? null;
@@ -743,7 +745,7 @@ export default function HostGame() {
 
         {!reveal && current && (
           <ul aria-label="Who has voted" className="flex max-w-5xl flex-wrap justify-center gap-2">
-            {players.map((p) => {
+            {votersNeeded.map((p) => {
               const done = voted.has(p.id);
               return (
                 <li

@@ -674,6 +674,10 @@ export default function PlayPage() {
   } else if ((phase === "voting" || phase === "reveal") && round && current) {
     const mine = current.player_id === player.id;
     const owner = names[current.player_id] ?? "Someone";
+    // With 3+ players the uploader blends in with a tap; with fewer there's
+    // nobody to hide from, so voting doesn't wait for them
+    const blendIn = (players?.length ?? 0) >= 3;
+    const votersNeeded = (players ?? []).filter((p) => blendIn || p.id !== current.player_id);
     const guess = myVotes[current.id];
     content = (
       <div className="flex flex-col gap-5">
@@ -722,70 +726,79 @@ export default function PlayPage() {
           </>
         ) : (
           <>
-            {mine ? (
-              <>
-                {bigPhoto(current.path, "Yours", "Your photo")}
-                <div>
-                  <p className="text-3xl font-bold">This one&apos;s yours.</p>
-                  <p className={muted}>
-                    Blend in: tap any name, like everyone else, so the list doesn&apos;t give you away.
-                    It doesn&apos;t count.
-                  </p>
-                </div>
-              </>
-            ) : (
-              bigPhoto(current.path, <span className="text-ink/45">Who took this?</span>, "Mystery photo")
-            )}
+            {mine
+              ? bigPhoto(current.path, "Yours", "Your photo")
+              : bigPhoto(current.path, <span className="text-ink/45">Who took this?</span>, "Mystery photo")}
             <ReactionBubbles photoId={current.id} counts={current.reactions} canShowNames={false} />
             <ReactionPicker mine={myReactions[current.id] ?? null} onPick={(e) => react(current.id, e)} />
-            <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label={mine ? "Blend in" : "Who took this?"}>
-              {others.map((c) => {
-                const picked = guess === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    role="radio"
-                    aria-checked={picked}
-                    onClick={() => vote(current.id, c.id)}
-                    className={`min-h-14 truncate rounded-2xl px-4 py-3 text-lg font-semibold active:scale-[0.98] ${focus} ${
-                      picked ? "border border-rose bg-rose text-white" : "glass"
-                    }`}
-                  >
-                    {c.name}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="text-base font-semibold" aria-live="polite">
-              {guess
-                ? mine
-                  ? "Done. You blend in."
-                  : `Vote sent: ${names[guess] ?? "someone"}. You can change it until voting closes.`
-                : "Your vote stays secret."}
-            </p>
-            {guess && (
+            {mine && !blendIn ? (
               <div>
-                <p className={label}>
-                  {voted.size} of {players?.length ?? 0} voted
-                </p>
-                <ul aria-label="Who has voted" className="mt-2 flex flex-wrap gap-2">
-                  {(players ?? []).map((p) => {
-                    const done = voted.has(p.id);
+                <p className="text-3xl font-bold">This one&apos;s yours.</p>
+                <p className={muted}>Keep a straight face. Voting goes on without you.</p>
+              </div>
+            ) : (
+              <>
+                {mine && (
+                  <div className={`rounded-2xl p-4 ${guess ? "glass" : "border-2 border-rose bg-white/70"}`}>
+                    <p className="text-2xl font-bold">This one&apos;s yours.</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {guess ? "Done. You blend in." : "Tap any name so the round can continue."}
+                    </p>
+                    <p className="mt-1 text-sm text-ink/65">
+                      Everyone taps a name, so the list doesn&apos;t give you away. Yours doesn&apos;t count.
+                    </p>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label={mine ? "Blend in" : "Who took this?"}>
+                  {others.map((c) => {
+                    const picked = guess === c.id;
                     return (
-                      <li
-                        key={p.id}
-                        className={`glass flex items-center gap-1 rounded-full px-3 py-1 text-base font-medium ${
-                          done ? "" : "opacity-45"
+                      <button
+                        key={c.id}
+                        role="radio"
+                        aria-checked={picked}
+                        onClick={() => vote(current.id, c.id)}
+                        className={`min-h-14 truncate rounded-2xl px-4 py-3 text-lg font-semibold active:scale-[0.98] ${focus} ${
+                          picked ? "border border-rose bg-rose text-white" : "glass"
                         }`}
                       >
-                        {done && <span aria-hidden>✓</span>}
-                        {p.name}
-                        <span className="sr-only">{done ? ", voted" : ", still voting"}</span>
-                      </li>
+                        {c.name}
+                      </button>
                     );
                   })}
-                </ul>
-              </div>
+                </div>
+                <p className="text-base font-semibold" aria-live="polite">
+                  {guess
+                    ? mine
+                      ? "Done. You blend in."
+                      : `Vote sent: ${names[guess] ?? "someone"}. You can change it until voting closes.`
+                    : "Your vote stays secret."}
+                </p>
+                {guess && (
+                  <div>
+                    <p className={label}>
+                      {votersNeeded.filter((p) => voted.has(p.id)).length} of {votersNeeded.length} voted
+                    </p>
+                    <ul aria-label="Who has voted" className="mt-2 flex flex-wrap gap-2">
+                      {votersNeeded.map((p) => {
+                        const done = voted.has(p.id);
+                        return (
+                          <li
+                            key={p.id}
+                            className={`glass flex items-center gap-1 rounded-full px-3 py-1 text-base font-medium ${
+                              done ? "" : "opacity-45"
+                            }`}
+                          >
+                            {done && <span aria-hidden>✓</span>}
+                            {p.name}
+                            <span className="sr-only">{done ? ", voted" : ", still voting"}</span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
