@@ -690,40 +690,78 @@ export default function HostGame() {
   } else if ((phase === "voting" || phase === "reveal") && round) {
     const reveal = phase === "reveal";
     body = (
-      <section className="flex flex-1 flex-col items-center justify-center gap-6 pt-2">
-        <h1 className="max-w-5xl text-center text-[clamp(2rem,4vw,3.75rem)] font-bold leading-tight">
+      <section className="flex flex-1 flex-col items-center justify-center gap-5 pt-2">
+        <h1 className="max-w-5xl text-center text-[clamp(1.75rem,3.6vw,3.5rem)] font-bold leading-tight">
           {round.prompt}
         </h1>
 
-        {current && (
-          <figure className="frame">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={photoUrl(current.path)}
-              alt={reveal ? `Photo by ${names[current.player_id] ?? "someone"}` : "Mystery photo"}
-              className="max-h-[54vh] max-w-[80vw] object-contain"
-            />
-            <figcaption className="px-4 pb-2 pt-4 text-center">
-              {reveal ? (
-                <>
-                  <span className="flex items-center justify-center gap-3 text-5xl font-semibold leading-none">
-                    {names[current.player_id] ?? "Someone"}
-                    <Heart key={current.id} className="heart-pulse h-10 w-10 text-rose" strokeWidth={1.75} />
-                  </span>
-                  {current.story ? (
-                    <span className="mx-auto mt-3 block max-w-3xl whitespace-pre-line text-2xl leading-snug">
-                      {current.story}
+        <div className="flex w-full flex-col items-center justify-center gap-6 lg:flex-row lg:items-start">
+          {current && (
+            <figure className="frame">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={photoUrl(current.path)}
+                alt={reveal ? `Photo by ${names[current.player_id] ?? "someone"}` : "Mystery photo"}
+                className={`max-h-[max(12rem,calc(100dvh-31rem))] object-contain ${
+                  reveal ? "max-w-[80vw]" : "max-w-[80vw] lg:max-w-[60vw]"
+                }`}
+              />
+              <figcaption className="px-4 pb-2 pt-4 text-center">
+                {reveal ? (
+                  <>
+                    <span className="flex items-center justify-center gap-3 text-5xl font-semibold leading-none">
+                      {names[current.player_id] ?? "Someone"}
+                      <Heart key={current.id} className="heart-pulse h-10 w-10 text-rose" strokeWidth={1.75} />
                     </span>
-                  ) : (
-                    <span className="mt-2 block text-2xl text-ink/70">Tell us the story</span>
-                  )}
-                </>
-              ) : (
-                <span className="block text-4xl font-semibold leading-none text-ink/45">Who took this?</span>
-              )}
-            </figcaption>
-          </figure>
-        )}
+                    {current.story ? (
+                      <span className="mx-auto mt-3 block max-w-3xl whitespace-pre-line text-2xl leading-snug">
+                        {current.story}
+                      </span>
+                    ) : (
+                      <span className="mt-2 block text-2xl text-ink/70">Tell us the story</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="block text-4xl font-semibold leading-none text-ink/45">Who took this?</span>
+                )}
+              </figcaption>
+            </figure>
+          )}
+
+          {/* Who has voted: beside the photo so it's always on screen */}
+          {!reveal && current && (
+            <aside
+              aria-label="Who has voted"
+              className="glass w-full max-w-md shrink-0 rounded-3xl p-5 lg:w-[min(26vw,360px)]"
+            >
+              <p className="text-2xl font-bold tabular-nums">
+                {gs?.vote_count ?? 0} of {eligibleVoters} voted
+              </p>
+              <ul className="mt-3 flex flex-col gap-1.5">
+                {votersNeeded.map((p) => {
+                  const done = voted.has(p.id);
+                  return (
+                    <li
+                      key={p.id}
+                      className={`flex items-center gap-3 text-2xl ${done ? "font-semibold" : "text-ink/45"}`}
+                    >
+                      <span
+                        aria-hidden
+                        className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-lg ${
+                          done ? "bg-rose text-white" : "border-2 border-ink/20"
+                        }`}
+                      >
+                        {done ? "✓" : ""}
+                      </span>
+                      <span className="truncate">{p.name}</span>
+                      <span className="sr-only">{done ? ", voted" : ", still voting"}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </aside>
+          )}
+        </div>
 
         {current && (
           <ReactionBubbles photoId={current.id} counts={current.reactions} canShowNames={reveal} size="lg" />
@@ -738,30 +776,10 @@ export default function HostGame() {
           )}
           <span className="text-2xl font-semibold text-ink/70">
             Photo {current?.position ?? "–"} of {photos.length}
-            {!reveal && ` · ${gs?.vote_count ?? 0} of ${eligibleVoters} voted`}
             {clock && (reveal ? ` · next in ${clock}` : ` · ${clock} left`)}
           </span>
         </div>
 
-        {!reveal && current && (
-          <ul aria-label="Who has voted" className="flex max-w-5xl flex-wrap justify-center gap-2">
-            {votersNeeded.map((p) => {
-              const done = voted.has(p.id);
-              return (
-                <li
-                  key={p.id}
-                  className={`glass flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xl font-medium ${
-                    done ? "" : "opacity-45"
-                  }`}
-                >
-                  {done && <span aria-hidden>✓</span>}
-                  {p.name}
-                  <span className="sr-only">{done ? ", voted" : ", still voting"}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
       </section>
     );
   } else if (phase === "scoreboard" && gallery) {
